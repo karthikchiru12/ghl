@@ -2,7 +2,9 @@
 
 const { Router } = require('express');
 const { highLevel, hasPit } = require('../lib/ghl');
+const { sessionStorage } = require('../services/sessionStorage');
 const { createLogger } = require('../lib/logger');
+const axios = require('axios');
 
 const log    = createLogger('routes:oauth');
 const router = Router();
@@ -30,8 +32,12 @@ router.get('/install-url', (req, res) => {
   return res.json({ ok: true, installUrl: url.toString() });
 });
 
-// GET /oauth/callback  — GHL redirects here after user authorises
-router.get('/oauth/callback', (req, res) => {
+// GET /oauth/callback
+// GHL redirects here after the user authorises the app.
+// We MUST exchange the one-time `code` for an access token here.
+// The token returned for a Location install is a location-scoped token —
+// we store it directly under the locationId so all subsequent SDK calls work.
+router.get('/oauth/callback', async (req, res) => {
   const { code, error, error_description: errorDescription } = req.query;
 
   if (error) {
@@ -40,16 +46,46 @@ router.get('/oauth/callback', (req, res) => {
   }
 
   if (!code) {
-    return res.status(400).json({ ok: false, error: "Missing code query parameter" });
+    return res.status(400).json({ ok: false, error: 'Missing code query parameter' });
   }
 
-  log.info('OAuth callback received.');
-  return res.json({
-    ok: true,
-    message: "Authorization completed. The SDK should receive INSTALL/UNINSTALL events on the webhook URL and manage tokens from there.",
-    codeReceived: true,
-    nextStep: "Configure your app's Default Webhook URL to POST to /webhooks/ghl on this service."
-  });
+  try {
+    log.info('OAuth callback: exchanging code for access token...');
+
+    // GHL token endpoint requires application/x-www-form-urlencoded
+    const { data } = await axios.post(
+      'https://services.leadconnectorhq.com/oauth/token',
+      new URLSearchParams({
+        client_id:     process.env.HIGHLEVEL_CLIENT_ID,
+        client_secret: process.env.HIGHLEVEL_CLIENT_SECRET,
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  process.env.HIGHLEVEL_REDIRECT_URI,
+        user_type:     'Location',
+      }).toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    log.info('Token exchange succeeded. userType:', data.userType, 'locationId:', data.locationId);
+
+    // Store under locationId (location-scoped token) AND companyId (agency token)
+    // so the SDK's generateLocationAccessToken can find a company token if needed.
+    if (data.locationId) {
+      await sessionStorage.setSession(data.locationId, data);
+      log.info('Location token stored for:', data.locationId);
+    }
+    if (data.companyId) {
+      await sessionStorage.setSession(data.companyId, data);
+      log.info('Company token stored for:', data.companyId);
+    }
+
+    // Redirect to dashboard instead of showing raw JSON
+    return res.redirect('/?installed=1');
+  } catch (err) {
+    const detail = err.response?.data ?? err.message;
+    log.error('Token exchange failed:', detail);
+    return res.status(500).json({ ok: false, error: 'Token exchange failed', detail });
+  }
 });
 
 module.exports = router;
