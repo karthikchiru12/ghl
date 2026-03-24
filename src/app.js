@@ -16,6 +16,13 @@ const dashboardRoutes = require('./routes/dashboard');
 
 const log = createLogger('app');
 
+// The GHL SDK WebhookManager internally reads process.env.CLIENT_ID (not our
+// HIGHLEVEL_CLIENT_ID prefix) to derive appId for INSTALL event matching.
+// Without this alias the SDK silently skips token persistence on every webhook.
+if (process.env.HIGHLEVEL_CLIENT_ID && !process.env.CLIENT_ID) {
+  process.env.CLIENT_ID = process.env.HIGHLEVEL_CLIENT_ID;
+}
+
 async function createApp() {
   // ─── DB initialisation (idempotent table creation) ─────────────────────
   await initDb();
