@@ -1,0 +1,19 @@
+{
+  "name": "ghl-oauth-test-backend",
+  "version": "1.0.0",
+  "description": "Minimal Node backend for testing HighLevel OAuth app installation.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@gohighlevel/api-client": "^1.0.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}

@@ -1,0 +1,14 @@
+services:
+  ghl-oauth-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ghl-oauth-backend
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      HIGHLEVEL_CLIENT_ID: ${HIGHLEVEL_CLIENT_ID}
+      HIGHLEVEL_CLIENT_SECRET: ${HIGHLEVEL_CLIENT_SECRET}
+      HIGHLEVEL_REDIRECT_URI: ${HIGHLEVEL_REDIRECT_URI}
+      HIGHLEVEL_PRIVATE_INTEGRATION_TOKEN: ${HIGHLEVEL_PRIVATE_INTEGRATION_TOKEN:-}
+    restart: unless-stopped
