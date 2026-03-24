@@ -40,7 +40,7 @@ router.get('/oauth/callback', (req, res) => {
   }
 
   if (!code) {
-    return res.status(400).json({ ok: false, error: 'Missing code parameter' });
+    return res.status(400).json({ ok: false, error: "Missing code query parameter" });
   }
 
   log.info('OAuth callback received.');

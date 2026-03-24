@@ -16,13 +16,6 @@ const dashboardRoutes = require('./routes/dashboard');
 
 const log = createLogger('app');
 
-// ─── Legacy SDK Support ─────────────────────────────────────────────────
-// The SDK v2.2.2 WebhookManager surprisingly maps `process.env.CLIENT_ID` 
-// directly to perform `appId` assertion rather than using its config object.
-if (process.env.HIGHLEVEL_CLIENT_ID && !process.env.CLIENT_ID) {
-  process.env.CLIENT_ID = process.env.HIGHLEVEL_CLIENT_ID;
-}
-
 async function createApp() {
   // ─── DB initialisation (idempotent table creation) ─────────────────────
   await initDb();
