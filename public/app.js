@@ -2,19 +2,14 @@ const { createApp, ref, onMounted, watch } = Vue;
 
 createApp({
   setup() {
-    const locations = ref([]);
+    const locations    = ref([]);
     const selectedLocation = ref('');
-    const summary = ref({});
+    const summary      = ref({});
     const selectedCall = ref(null);
     const selectedCallDetail = ref(null);
-    const error = ref(null);
+    const error        = ref(null);
 
-    const loading = ref({
-      locations: false,
-      agents: false,
-      calls: false,
-      analyzing: false
-    });
+    const loading = ref({ locations: false, agents: false, calls: false, analyzing: false });
 
     const showError = (msg) => {
       error.value = msg;
@@ -23,11 +18,9 @@ createApp({
 
     const apiFetch = async (url, options = {}) => {
       try {
-        const res = await fetch(url, options);
+        const res  = await fetch(url, options);
         const data = await res.json();
-        if (!res.ok || !data.ok) {
-          throw new Error(data.error || `HTTP ${res.status}`);
-        }
+        if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
         return data;
       } catch (err) {
         showError(err.message);
@@ -40,8 +33,8 @@ createApp({
       try {
         const data = await apiFetch('/api/locations');
         locations.value = data.locations || [];
-        // Auto-select if only one
-        if (locations.value.length === 1 && !selectedLocation.value) {
+        // Auto-select first location
+        if (locations.value.length && !selectedLocation.value) {
           selectedLocation.value = locations.value[0].location_id;
         }
       } catch (e) {
@@ -62,74 +55,55 @@ createApp({
     };
 
     const syncAgents = async () => {
-      if (!selectedLocation.value) return;
+      if (!selectedLocation.value) return showError('Select a location first');
       loading.value.agents = true;
       try {
         await apiFetch(`/api/locations/${selectedLocation.value}/agents?sync=true`);
         await loadDashboard();
-      } finally {
-        loading.value.agents = false;
-      }
+      } finally { loading.value.agents = false; }
     };
 
     const syncCalls = async () => {
-      if (!selectedLocation.value) return;
+      if (!selectedLocation.value) return showError('Select a location first');
       loading.value.calls = true;
       try {
         await apiFetch(`/api/locations/${selectedLocation.value}/calls?sync=true&limit=50`);
         await loadDashboard();
-      } finally {
-        loading.value.calls = false;
-      }
+      } finally { loading.value.calls = false; }
     };
 
     const analyzePending = async () => {
-      if (!selectedLocation.value) return;
+      if (!selectedLocation.value) return showError('Select a location first');
       loading.value.analyzing = true;
       try {
         await apiFetch(`/api/locations/${selectedLocation.value}/analyze-pending`, { method: 'POST' });
         await loadDashboard();
-      } finally {
-        loading.value.analyzing = false;
-      }
+      } finally { loading.value.analyzing = false; }
     };
 
     const viewCallDetail = async (callId) => {
       selectedCall.value = callId;
-      selectedCallDetail.value = null; // show loading state in modal
+      selectedCallDetail.value = null;
       try {
         const [callData, analysisData] = await Promise.all([
-          apiFetch(`/api/locations/${selectedLocation.value}/calls/${callId}`).catch(()=>null),
-          apiFetch(`/api/locations/${selectedLocation.value}/calls/${callId}/analysis`).catch(()=>null)
+          apiFetch(`/api/locations/${selectedLocation.value}/calls/${callId}`).catch(() => null),
+          apiFetch(`/api/locations/${selectedLocation.value}/calls/${callId}/analysis`).catch(() => null),
         ]);
-
-        if (callData && callData.call) {
-           let transcript = callData.call.transcript;
-           if (typeof transcript === 'string') {
-             try { transcript = JSON.parse(transcript); } catch(e){}
-           }
-           if (!Array.isArray(transcript)) {
-             transcript = [{ role: 'raw', content: String(transcript) }];
-           }
-           
-           selectedCallDetail.value = {
-             ...callData.call,
-             transcript,
-             analysis: analysisData?.analysis || null
-           };
+        if (callData?.call) {
+          let transcript = callData.call.transcript;
+          if (typeof transcript === 'string') { try { transcript = JSON.parse(transcript); } catch (e) {} }
+          if (!Array.isArray(transcript)) transcript = [{ role: 'raw', content: String(transcript) }];
+          selectedCallDetail.value = { ...callData.call, transcript, analysis: analysisData?.analysis ?? null };
         }
       } catch (e) {
-        // Error already toast-ed by apiFetch
         selectedCall.value = null;
       }
     };
 
     const installApp = () => {
       apiFetch('/install-url').then(data => {
-        if (data.installUrl) {
-          window.location.href = data.installUrl;
-        }
-      });
+        if (data.installUrl) window.location.href = data.installUrl;
+      }).catch(() => {});
     };
 
     const getScoreClass = (score) => {
@@ -140,30 +114,19 @@ createApp({
       return 'score-red';
     };
 
-    watch(selectedLocation, () => {
+    watch(selectedLocation, (val) => { if (val) loadDashboard(); });
+
+    onMounted(async () => {
+      await fetchLocations();
+      // Auto-load dashboard for the auto-selected location
       if (selectedLocation.value) loadDashboard();
     });
 
-    onMounted(() => {
-      fetchLocations();
-    });
-
     return {
-      locations,
-      selectedLocation,
-      summary,
-      loading,
-      error,
-      selectedCall,
-      selectedCallDetail,
-      fetchLocations,
-      loadDashboard,
-      syncAgents,
-      syncCalls,
-      analyzePending,
-      viewCallDetail,
-      installApp,
-      getScoreClass
+      locations, selectedLocation, summary, loading, error,
+      selectedCall, selectedCallDetail,
+      fetchLocations, loadDashboard, syncAgents, syncCalls,
+      analyzePending, viewCallDetail, installApp, getScoreClass,
     };
   }
 }).mount('#app');
