@@ -16,6 +16,13 @@ const dashboardRoutes = require('./routes/dashboard');
 
 const log = createLogger('app');
 
+// ─── Legacy SDK Support ─────────────────────────────────────────────────
+// The SDK v2.2.2 WebhookManager surprisingly maps `process.env.CLIENT_ID` 
+// directly to perform `appId` assertion rather than using its config object.
+if (process.env.HIGHLEVEL_CLIENT_ID && !process.env.CLIENT_ID) {
+  process.env.CLIENT_ID = process.env.HIGHLEVEL_CLIENT_ID;
+}
+
 async function createApp() {
   // ─── DB initialisation (idempotent table creation) ─────────────────────
   await initDb();
@@ -23,12 +30,12 @@ async function createApp() {
   const app = express();
 
   // ─── Body parsing ───────────────────────────────────────────────────────
-  // Webhooks route needs raw body for HMAC verification — mounted BEFORE json()
-  app.use('/webhooks/ghl', webhookRoutes);
-
-  // All other routes get JSON parsing
+  // The GHL SDK WebhookManager surprisingly expects req.body to be parsed already,
+  // as it re-stringifies it internally for HMAC verification.
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+
+  app.use('/webhooks/ghl', webhookRoutes);
 
   // ─── Serve Vue dashboard from public/ ──────────────────────────────────
   app.use(express.static(path.join(__dirname, '..', 'public')));
