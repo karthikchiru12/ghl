@@ -12,8 +12,10 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@gohighlevel/api-client": "^1.0.1",
+    "@gohighlevel/api-client": "^2.2.2",
+    "axios": "^1.13.6",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pg": "^8.13.3"
   }
 }

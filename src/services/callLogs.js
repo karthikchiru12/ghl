@@ -1,0 +1,152 @@
+'use strict';
+
+const { highLevel } = require('../lib/ghl');
+const { sdkOptions } = require('./voiceAgents');
+const { pool } = require('../db/pool');
+const { createLogger } = require('../lib/logger');
+
+const log = createLogger('callLogs');
+
+/**
+ * Map a GHL CallLogDTO (SDK shape) to our DB columns.
+ *
+ * SDK CallLogDTO:
+ *   id, contactId, agentId, isAgentDeleted, fromNumber, createdAt,
+ *   duration, trialCall, executedCallActions, summary, transcript,
+ *   translation, extractedData, messageId
+ *
+ *  Note: there is no startedAt/endedAt in the SDK model; `createdAt` is
+ *  the call start time and `duration` is in seconds.
+ */
+function normaliseCall(raw, locationId) {
+  const transcript = typeof raw.transcript === 'string' && raw.transcript.trim()
+    ? [{ role: 'raw', content: raw.transcript }]
+    : Array.isArray(raw.transcript)
+      ? raw.transcript
+      : null;
+
+  return {
+    callId:          raw.id,
+    agentId:         raw.agentId         ?? null,
+    locationId,
+    transcript:      transcript          ? JSON.stringify(transcript) : null,
+    summary:         raw.summary         ?? null,
+    extractedData:   JSON.stringify(raw.extractedData  ?? null),
+    executedActions: JSON.stringify(raw.executedCallActions ?? null),
+    durationSeconds: raw.duration        ?? null,
+    status:          raw.trialCall ? 'trial' : 'completed',
+    startedAt:       raw.createdAt       ?? null,
+    endedAt:         null,  // not provided by GHL SDK
+    raw:             JSON.stringify(raw),
+  };
+}
+
+async function upsertCall(c) {
+  await pool.query(
+    `INSERT INTO call_logs
+       (call_id, agent_id, location_id, transcript, summary, extracted_data,
+        executed_actions, duration_seconds, status, started_at, ended_at, raw, synced_at)
+     VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb,NOW())
+     ON CONFLICT (call_id) DO UPDATE
+       SET agent_id          = EXCLUDED.agent_id,
+           transcript        = EXCLUDED.transcript,
+           summary           = EXCLUDED.summary,
+           extracted_data    = EXCLUDED.extracted_data,
+           executed_actions  = EXCLUDED.executed_actions,
+           duration_seconds  = EXCLUDED.duration_seconds,
+           status            = EXCLUDED.status,
+           started_at        = EXCLUDED.started_at,
+           raw               = EXCLUDED.raw,
+           synced_at         = NOW()`,
+    [
+      c.callId, c.agentId, c.locationId, c.transcript, c.summary,
+      c.extractedData, c.executedActions, c.durationSeconds, c.status,
+      c.startedAt, c.endedAt, c.raw,
+    ]
+  );
+}
+
+/**
+ * Fetch call logs from GHL via the SDK voiceAi.getCallLogs(), persist, and return.
+ *
+ * @param {string} locationId
+ * @param {{ agentId?, page?, pageSize? }} [opts]
+ */
+async function syncCallLogs(locationId, { agentId, page = 1, pageSize = 50 } = {}) {
+  log.info('Syncing call logs via SDK for location:', locationId);
+
+  const opts = await sdkOptions(locationId);
+  const params = { locationId, page, pageSize };
+  if (agentId) params.agentId = agentId;
+
+  // SDK endpoint: GET /voice-ai/dashboard/call-logs
+  const data = await highLevel.voiceAi.getCallLogs(params, opts);
+
+  // SDK shape: { total, page, pageSize, callLogs: [...] }
+  const calls = data?.callLogs ?? [];
+  log.info(`Fetched ${calls.length} call(s) (total: ${data?.total ?? '?'}) for location:`, locationId);
+
+  for (const raw of calls) {
+    if (!raw.id) { log.warn('Skipping call with no id'); continue; }
+    const c = normaliseCall(raw, locationId);
+    await upsertCall(c);
+  }
+
+  return getCallsByLocation(locationId, { agentId, page, pageSize });
+}
+
+/**
+ * Return stored call logs from DB, joined with any analysis results.
+ */
+async function getCallsByLocation(locationId, { agentId, page = 1, pageSize = 50 } = {}) {
+  const offset = (page - 1) * pageSize;
+  const values = [locationId, pageSize, offset];
+  let query = `
+    SELECT
+      cl.call_id, cl.agent_id, cl.location_id, cl.summary,
+      cl.duration_seconds, cl.status, cl.started_at, cl.synced_at,
+      va.name AS agent_name,
+      ca.score, ca.success, ca.analyzed_at
+    FROM call_logs cl
+    LEFT JOIN voice_agents va ON va.agent_id = cl.agent_id
+    LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
+    WHERE cl.location_id = $1`;
+
+  if (agentId) {
+    values.push(agentId);
+    query += ` AND cl.agent_id = $${values.length}`;
+  }
+
+  query += ` ORDER BY cl.started_at DESC NULLS LAST LIMIT $2 OFFSET $3`;
+
+  const result = await pool.query(query, values);
+  return result.rows;
+}
+
+/**
+ * Return a single call with full transcript (DB first, then SDK if missing).
+ */
+async function getCallDetail(callId, locationId) {
+  const cached = await pool.query(
+    `SELECT * FROM call_logs WHERE call_id = $1 LIMIT 1`,
+    [callId]
+  );
+  if (cached.rows.length > 0) return cached.rows[0];
+
+  // Not cached — fetch from GHL SDK
+  log.info('Call not in DB, fetching via SDK:', callId);
+  const opts = await sdkOptions(locationId);
+  const raw  = await highLevel.voiceAi.getCallLog({ callId, locationId }, opts);
+
+  if (!raw?.id) return null;
+  const c = normaliseCall(raw, locationId);
+  await upsertCall(c);
+
+  const fresh = await pool.query(
+    `SELECT * FROM call_logs WHERE call_id = $1 LIMIT 1`,
+    [callId]
+  );
+  return fresh.rows[0] ?? null;
+}
+
+module.exports = { syncCallLogs, getCallsByLocation, getCallDetail, normaliseCall, upsertCall };

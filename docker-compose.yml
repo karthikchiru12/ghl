@@ -1,14 +1,48 @@
+version: '3.8'
+
 services:
-  ghl-oauth-backend:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ghl-oauth-backend
+    container_name: ghl-voice-copilot
+    ports:
+      - "3000:3000"
     environment:
       PORT: 3000
       HOST: 0.0.0.0
+      DATABASE_URL: postgres://ghl:pass@db:5432/ghl
+      DATABASE_SSL: "false"
       HIGHLEVEL_CLIENT_ID: ${HIGHLEVEL_CLIENT_ID}
       HIGHLEVEL_CLIENT_SECRET: ${HIGHLEVEL_CLIENT_SECRET}
       HIGHLEVEL_REDIRECT_URI: ${HIGHLEVEL_REDIRECT_URI}
       HIGHLEVEL_PRIVATE_INTEGRATION_TOKEN: ${HIGHLEVEL_PRIVATE_INTEGRATION_TOKEN:-}
+      CHUTES_API_KEY: ${CHUTES_API_KEY:-}
+      CHUTES_BASE_URL: ${CHUTES_BASE_URL:-https://llm.chutes.ai/v1}
+      CHUTES_MINIMAX_MODEL: ${CHUTES_MINIMAX_MODEL:-MiniMaxAI/MiniMax-M2.5-TEE}
+      LOG_WEBHOOK_BODIES: ${LOG_WEBHOOK_BODIES:-false}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: ghl-postgres
+    environment:
+      POSTGRES_USER: ghl
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: ghl
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
