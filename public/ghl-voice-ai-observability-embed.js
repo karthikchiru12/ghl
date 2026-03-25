@@ -16,6 +16,7 @@
     currentKey: '',
     lastFetchedAt: 0,
     payload: null,
+    hydratedKeys: {},
   };
 
   const STYLE_ID = 'ghl-voice-ai-copilot-style';
@@ -44,16 +45,20 @@
         state.contextToken = state.contextToken || await getContextToken();
         if (!state.contextToken) return;
 
-        const [dashboardRes, callsRes] = await Promise.all([
-          fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/dashboard`, {
-            limit: 8,
-            agentId: scope.agentId || '',
-          })),
-          fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls`, {
-            limit: 8,
-            agentId: scope.agentId || '',
-          })),
-        ]);
+        const shouldHydrate = !state.hydratedKeys[scope.key];
+        const dashboardRes = await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/dashboard`, {
+          limit: 8,
+          agentId: scope.agentId || '',
+          hydrate: shouldHydrate ? 'true' : '',
+        }));
+        if (shouldHydrate) {
+          state.hydratedKeys[scope.key] = true;
+        }
+
+        const callsRes = await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls`, {
+          limit: 8,
+          agentId: scope.agentId || '',
+        }));
 
         state.payload = {
           scope,

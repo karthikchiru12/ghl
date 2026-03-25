@@ -129,26 +129,46 @@ async function fetchCallDetailFromSdk(callId, locationId) {
  * Fetch call logs from GHL via the SDK voiceAi.getCallLogs(), persist, and return.
  *
  * @param {string} locationId
- * @param {{ agentId?, page?, pageSize? }} [opts]
+ * @param {{ agentId?, page?, pageSize?, allPages?: boolean }} [opts]
  */
-async function syncCallLogs(locationId, { agentId, page = 1, pageSize = 50 } = {}) {
+async function syncCallLogs(locationId, { agentId, page = 1, pageSize = 50, allPages = false } = {}) {
   log.info('Syncing call logs via SDK for location:', locationId);
 
   const opts = await sdkOptions(locationId);
-  const params = { locationId, page, pageSize };
-  if (agentId) params.agentId = agentId;
+  const allCalls = [];
+  let currentPage = page;
+  let total = null;
 
-  // SDK endpoint: GET /voice-ai/dashboard/call-logs
-  const data = await highLevel.voiceAi.getCallLogs(params, opts);
+  while (true) {
+    const params = { locationId, page: currentPage, pageSize };
+    if (agentId) params.agentId = agentId;
 
-  // SDK shape: { total, page, pageSize, callLogs: [...] }
-  const calls = data?.callLogs ?? [];
-  log.info(`Fetched ${calls.length} call(s) (total: ${data?.total ?? '?'}) for location:`, locationId);
+    // SDK endpoint: GET /voice-ai/dashboard/call-logs
+    const data = await highLevel.voiceAi.getCallLogs(params, opts);
 
-  for (const raw of calls) {
-    if (!raw.id) { log.warn('Skipping call with no id'); continue; }
-    const c = normaliseCall(raw, locationId);
-    await upsertCall(c);
+    // SDK shape: { total, page, pageSize, callLogs: [...] }
+    const calls = data?.callLogs ?? [];
+    if (total == null) total = data?.total ?? calls.length;
+
+    log.info(
+      `Fetched ${calls.length} call(s) from page ${currentPage} (total: ${total ?? '?'}) for location:`,
+      locationId
+    );
+
+    for (const raw of calls) {
+      if (!raw.id) {
+        log.warn('Skipping call with no id');
+        continue;
+      }
+      allCalls.push(raw);
+      const c = normaliseCall(raw, locationId);
+      await upsertCall(c);
+    }
+
+    if (!allPages) break;
+    if (calls.length === 0) break;
+    if (total != null && (currentPage * pageSize) >= total) break;
+    currentPage += 1;
   }
 
   await logEvent({
@@ -156,8 +176,8 @@ async function syncCallLogs(locationId, { agentId, page = 1, pageSize = 50 } = {
     eventType: 'voice-calls.sync',
     status: 'success',
     title: 'Voice call logs synced',
-    detail: `${calls.length} call(s) refreshed from HighLevel`,
-    payload: { page, pageSize, total: data?.total ?? calls.length, agentId: agentId ?? null },
+    detail: `${allCalls.length} call(s) refreshed from HighLevel`,
+    payload: { page, pageSize, total: total ?? allCalls.length, agentId: agentId ?? null, allPages },
   });
 
   return getCallsByLocation(locationId, { agentId, page, pageSize });

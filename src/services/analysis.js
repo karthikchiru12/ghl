@@ -371,15 +371,17 @@ async function analysePendingCalls(locationId, { limit = 20, agentId = null } = 
     predicate += ` AND cl.agent_id = $${values.length}`;
   }
 
-  values.push(limit);
-  const pending = await pool.query(
-    `SELECT cl.call_id FROM call_logs cl
+  let query = `SELECT cl.call_id FROM call_logs cl
      LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
      WHERE ${predicate} AND ca.call_id IS NULL
-     ORDER BY cl.started_at DESC
-     LIMIT $${values.length}`,
-    values
-  );
+     ORDER BY cl.started_at DESC`;
+
+  if (Number.isFinite(limit) && limit > 0) {
+    values.push(limit);
+    query += ` LIMIT $${values.length}`;
+  }
+
+  const pending = await pool.query(query, values);
 
   log.info(
     `Analysing ${pending.rows.length} pending calls for location:`,
