@@ -9,52 +9,130 @@ const { logEvent } = require('./activityLog');
 
 const log = createLogger('analysis');
 
+function parseJsonValue(value, fallback = null) {
+  if (value == null) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (_error) {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function omitKeys(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !keys.includes(key))
+  );
+}
+
 /**
  * Build the LLM analysis messages for Minimax M2.5.
  * Returns the messages array for the chat completion request.
  */
 function buildAnalysisMessages(call, agent) {
+  const transcriptEntries = parseJsonValue(call.transcript, []);
   const transcriptText = (() => {
-    if (!call.transcript) return 'No transcript available.';
-    const t = typeof call.transcript === 'string'
-      ? JSON.parse(call.transcript)
-      : call.transcript;
-    if (Array.isArray(t)) {
-      return t.map((m) => `${m.role ?? m.speaker ?? 'unknown'}: ${m.content ?? m.message ?? ''}`).join('\n');
+    if (Array.isArray(transcriptEntries) && transcriptEntries.length > 0) {
+      return transcriptEntries
+        .map((m) => `${m.role ?? m.speaker ?? 'unknown'}: ${m.content ?? m.message ?? ''}`)
+        .join('\n');
     }
-    return String(t);
+    return call.transcript_text || 'No transcript available.';
   })();
 
-  const configuredActions = Array.isArray(agent?.actions)
-    ? agent.actions
-    : (typeof agent?.actions === 'string'
-      ? JSON.parse(agent.actions || '[]')
-      : []);
+  const configuredActions = parseJsonValue(agent?.actions, []);
+  const executedActions = parseJsonValue(call.executed_actions, []);
+  const extractedData = parseJsonValue(call.extracted_data, null);
+  const translation = parseJsonValue(call.translation, null);
+  const agentRaw = parseJsonValue(agent?.raw, {});
+  const callRaw = parseJsonValue(call.raw, {});
 
-  const executedActions = Array.isArray(call.executed_actions)
-    ? call.executed_actions
-    : (typeof call.executed_actions === 'string'
-      ? JSON.parse(call.executed_actions || '[]')
-      : []);
+  const agentContext = agent ? {
+    id: agent.agent_id ?? agentRaw.id ?? null,
+    locationId: agent.location_id ?? agentRaw.locationId ?? call.location_id ?? null,
+    agentName: agent.name ?? agentRaw.agentName ?? null,
+    businessName: agent.business_name ?? agentRaw.businessName ?? null,
+    welcomeMessage: agent.welcome_message ?? agentRaw.welcomeMessage ?? null,
+    agentPrompt: agent.prompt ?? agent.script ?? agentRaw.agentPrompt ?? null,
+    voiceId: agent.voice_id ?? agentRaw.voiceId ?? null,
+    language: agent.language ?? agentRaw.language ?? null,
+    patienceLevel: agent.patience_level ?? agentRaw.patienceLevel ?? null,
+    maxCallDuration: agent.max_call_duration ?? agentRaw.maxCallDuration ?? null,
+    sendUserIdleReminders: agent.metadata?.sendUserIdleReminders ?? agentRaw.sendUserIdleReminders ?? null,
+    reminderAfterIdleTimeSeconds:
+      agent.metadata?.reminderAfterIdleTimeSeconds ?? agentRaw.reminderAfterIdleTimeSeconds ?? null,
+    inboundNumber: agent.metadata?.inboundNumber ?? agentRaw.inboundNumber ?? null,
+    numberPoolId: agent.metadata?.numberPoolId ?? agentRaw.numberPoolId ?? null,
+    callEndWorkflowIds: agent.call_end_workflow_ids ?? agentRaw.callEndWorkflowIds ?? [],
+    agentWorkingHours: agent.working_hours ?? agentRaw.agentWorkingHours ?? [],
+    timezone: agent.timezone ?? agentRaw.timezone ?? null,
+    isAgentAsBackupDisabled:
+      agent.metadata?.isAgentAsBackupDisabled ?? agentRaw.isAgentAsBackupDisabled ?? null,
+    translation: agent.metadata?.translation ?? agentRaw.translation ?? null,
+    actions: configuredActions,
+    recentCalls: parseJsonValue(agent.recent_calls, []),
+    rawExtraFields: omitKeys(agentRaw, [
+      'id',
+      'locationId',
+      'agentName',
+      'businessName',
+      'welcomeMessage',
+      'agentPrompt',
+      'voiceId',
+      'language',
+      'patienceLevel',
+      'maxCallDuration',
+      'sendUserIdleReminders',
+      'reminderAfterIdleTimeSeconds',
+      'inboundNumber',
+      'numberPoolId',
+      'callEndWorkflowIds',
+      'agentWorkingHours',
+      'timezone',
+      'isAgentAsBackupDisabled',
+      'translation',
+      'actions',
+    ]),
+  } : null;
 
-  const agentContext = agent
-    ? `Agent name: ${agent.name ?? 'Unknown'}
-Business name: ${agent.business_name ?? 'Not provided'}
-Welcome message: ${agent.welcome_message ?? 'Not provided'}
-Agent system prompt: ${(agent.prompt ?? agent.script ?? 'Not provided').slice(0, 2000)}
-Agent goals/KPIs: ${JSON.stringify(agent.goals ?? {}, null, 2)}
-Configured agent actions:
-${JSON.stringify(configuredActions, null, 2)}
-Agent metadata:
-${JSON.stringify({
-  voiceId: agent.voice_id ?? null,
-  language: agent.language ?? null,
-  patienceLevel: agent.patience_level ?? null,
-  maxCallDuration: agent.max_call_duration ?? null,
-  timezone: agent.timezone ?? null,
-  callEndWorkflowIds: agent.call_end_workflow_ids ?? [],
-}, null, 2)}`
-    : 'No agent metadata available.';
+  const callContext = {
+    id: call.call_id ?? callRaw.id ?? null,
+    locationId: call.location_id ?? null,
+    contactId: call.contact_id ?? callRaw.contactId ?? null,
+    agentId: call.agent_id ?? callRaw.agentId ?? null,
+    isAgentDeleted: callRaw.isAgentDeleted ?? null,
+    fromNumber: call.from_number ?? callRaw.fromNumber ?? null,
+    createdAt: call.started_at ?? callRaw.createdAt ?? null,
+    durationSeconds: call.duration_seconds ?? callRaw.duration ?? null,
+    trialCall: call.trial_call ?? callRaw.trialCall ?? null,
+    status: call.status ?? null,
+    messageId: call.message_id ?? callRaw.messageId ?? null,
+    summary: call.summary ?? callRaw.summary ?? null,
+    extractedData,
+    translation,
+    executedCallActions: executedActions,
+    transcriptText,
+    transcriptTurns: Array.isArray(transcriptEntries) ? transcriptEntries : [],
+    rawExtraFields: omitKeys(callRaw, [
+      'id',
+      'contactId',
+      'agentId',
+      'isAgentDeleted',
+      'fromNumber',
+      'createdAt',
+      'duration',
+      'trialCall',
+      'executedCallActions',
+      'summary',
+      'transcript',
+      'translation',
+      'extractedData',
+      'messageId',
+    ]),
+  };
 
   const systemPrompt = `You are an expert Voice AI quality analyst. Analyse the provided call transcript against the agent's goals and success criteria. Return ONLY a valid JSON object — no markdown, no explanation — matching this exact schema:
 
@@ -89,21 +167,16 @@ ${JSON.stringify({
 }`;
 
   const userMessage = `## Agent Context
-${agentContext}
+${agentContext ? JSON.stringify(agentContext, null, 2) : 'No agent metadata available.'}
 
 ## Call Metadata
-- Call ID: ${call.call_id}
-- Status: ${call.status ?? 'unknown'}
-- Duration: ${call.duration_seconds ?? 'unknown'} seconds
-- Summary: ${call.summary ?? 'None'}
-- Executed actions during call:
-${JSON.stringify(executedActions, null, 2)}
+${JSON.stringify(callContext, null, 2)}
 
 ## Transcript
 ${transcriptText}
 
 ## Task
-Evaluate this call. Use the configured prompt and actions as the evaluation baseline. Highlight where the agent prompt or action wiring is misaligned with the observed call. Return strictly the JSON schema defined in your instructions.`;
+Evaluate this call. Use the complete agent configuration, action parameters, executed call actions, extracted data, and call-log metadata as the evaluation baseline. Highlight where the prompt, action wiring, or routing and working-hours configuration is misaligned with the observed call. Return strictly the JSON schema defined in your instructions.`;
 
   return [
     { role: 'system', content: systemPrompt },
@@ -169,22 +242,57 @@ async function analyseCall(callId, locationId) {
     metrics,
   };
 
+  const agentRawSnapshot = parseJsonValue(agent?.raw, {});
   const agentSnapshot = agent
     ? {
         agentId: agent.agent_id ?? call.agent_id ?? null,
         name: agent.name ?? null,
+        locationId: agent.location_id ?? agentRawSnapshot.locationId ?? locationId,
         businessName: agent.business_name ?? null,
         welcomeMessage: agent.welcome_message ?? null,
         prompt: agent.prompt ?? agent.script ?? null,
         actions: agent.actions ?? [],
-        goals: agent.goals ?? {},
+        recentCalls: parseJsonValue(agent.recent_calls, []),
         metadata: {
           voiceId: agent.voice_id ?? null,
           language: agent.language ?? null,
           patienceLevel: agent.patience_level ?? null,
           maxCallDuration: agent.max_call_duration ?? null,
+          sendUserIdleReminders:
+            agent.metadata?.sendUserIdleReminders ?? agentRawSnapshot.sendUserIdleReminders ?? null,
+          reminderAfterIdleTimeSeconds:
+            agent.metadata?.reminderAfterIdleTimeSeconds ?? agentRawSnapshot.reminderAfterIdleTimeSeconds ?? null,
+          inboundNumber: agent.metadata?.inboundNumber ?? agentRawSnapshot.inboundNumber ?? null,
+          numberPoolId: agent.metadata?.numberPoolId ?? agentRawSnapshot.numberPoolId ?? null,
           timezone: agent.timezone ?? null,
+          callEndWorkflowIds: agent.call_end_workflow_ids ?? agentRawSnapshot.callEndWorkflowIds ?? [],
+          agentWorkingHours: agent.working_hours ?? agentRawSnapshot.agentWorkingHours ?? [],
+          isAgentAsBackupDisabled:
+            agent.metadata?.isAgentAsBackupDisabled ?? agentRawSnapshot.isAgentAsBackupDisabled ?? null,
+          translation: agent.metadata?.translation ?? agentRawSnapshot.translation ?? null,
         },
+        rawExtraFields: omitKeys(agentRawSnapshot, [
+          'id',
+          'locationId',
+          'agentName',
+          'businessName',
+          'welcomeMessage',
+          'agentPrompt',
+          'voiceId',
+          'language',
+          'patienceLevel',
+          'maxCallDuration',
+          'sendUserIdleReminders',
+          'reminderAfterIdleTimeSeconds',
+          'inboundNumber',
+          'numberPoolId',
+          'callEndWorkflowIds',
+          'agentWorkingHours',
+          'timezone',
+          'isAgentAsBackupDisabled',
+          'translation',
+          'actions',
+        ]),
       }
     : {};
 
@@ -251,20 +359,33 @@ async function analyseCall(callId, locationId) {
  * Processes calls in batches of 3 concurrently to balance throughput and rate limits.
  *
  * @param {string} locationId
- * @param {{ limit?: number }} [opts]
+ * @param {{ limit?: number, agentId?: string | null }} [opts]
  * @returns {Promise<Array>}
  */
-async function analysePendingCalls(locationId, { limit = 20 } = {}) {
+async function analysePendingCalls(locationId, { limit = 20, agentId = null } = {}) {
+  const values = [locationId];
+  let predicate = 'cl.location_id = $1';
+
+  if (agentId) {
+    values.push(agentId);
+    predicate += ` AND cl.agent_id = $${values.length}`;
+  }
+
+  values.push(limit);
   const pending = await pool.query(
     `SELECT cl.call_id FROM call_logs cl
      LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
-     WHERE cl.location_id = $1 AND ca.call_id IS NULL
+     WHERE ${predicate} AND ca.call_id IS NULL
      ORDER BY cl.started_at DESC
-     LIMIT $2`,
-    [locationId, limit]
+     LIMIT $${values.length}`,
+    values
   );
 
-  log.info(`Analysing ${pending.rows.length} pending calls for location:`, locationId);
+  log.info(
+    `Analysing ${pending.rows.length} pending calls for location:`,
+    locationId,
+    agentId ? `(agent ${agentId})` : ''
+  );
 
   const results = [];
   const CONCURRENCY = 3;

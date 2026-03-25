@@ -29,10 +29,10 @@ async function initDb() {
   log.info('Initializing database schema...');
 
   // TEMPORARY FOR ASSIGNMENT DEMOS:
-  // Comment out the next line before productionizing, otherwise every restart
+  // Keep this disabled in normal development/production, otherwise every restart
   // or redeploy will wipe all installs, tokens, cached agents, calls, analyses,
   // and logs from Postgres.
-  await dangerouslyResetDbOnStartup();
+  // await dangerouslyResetDbOnStartup();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ghl_sessions (
