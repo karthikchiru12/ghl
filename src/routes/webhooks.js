@@ -2,8 +2,8 @@
 
 const { Router } = require('express');
 const { highLevel } = require('../lib/ghl');
-const { pool } = require('../db/pool');
 const { createLogger } = require('../lib/logger');
+const { getAppId, markUninstalled, upsertInstallation } = require('../services/installations');
 
 const log    = createLogger('routes:webhooks');
 const router = Router();
@@ -30,20 +30,22 @@ router.post('/', async (req, res) => {
   if (eventType === 'INSTALL') {
     const locationId = payload.locationId ?? payload.location_id ?? null;
     const companyId  = payload.companyId  ?? payload.company_id  ?? null;
-    // GHL sends the name directly in the webhook payload
     const name       = payload.locationName ?? payload.name ?? null;
 
     if (locationId) {
       try {
-        await pool.query(
-          `INSERT INTO locations (location_id, company_id, name, created_at, updated_at)
-           VALUES ($1, $2, $3, NOW(), NOW())
-           ON CONFLICT (location_id) DO UPDATE
-             SET company_id = EXCLUDED.company_id,
-                 name       = COALESCE(EXCLUDED.name, locations.name),
-                 updated_at = NOW()`,
-          [locationId, companyId, name]
-        );
+        await upsertInstallation({
+          appId: getAppId(),
+          locationId,
+          companyId,
+          locationName: name,
+          tokenResourceId: locationId,
+          installContext: {
+            source: 'webhook',
+            userId: payload.userId ?? null,
+          },
+          rawPayload: payload,
+        });
         log.info('Location installed and persisted:', locationId, name ? `(${name})` : '');
       } catch (err) {
         log.error('Failed to persist installed location:', err.message);
@@ -55,6 +57,13 @@ router.post('/', async (req, res) => {
   if (eventType === 'UNINSTALL') {
     const locationId = payload.locationId ?? payload.location_id ?? null;
     if (locationId) {
+      await markUninstalled({
+        appId: getAppId(),
+        locationId,
+        companyId: payload.companyId ?? payload.company_id ?? null,
+        locationName: payload.locationName ?? payload.name ?? null,
+        rawPayload: payload,
+      });
       log.info('App uninstalled from location:', locationId);
     }
   }

@@ -4,7 +4,8 @@ const { Router } = require('express');
 const { highLevel, hasPit } = require('../lib/ghl');
 const { sessionStorage } = require('../services/sessionStorage');
 const { createLogger } = require('../lib/logger');
-const axios = require('axios');
+const { upsertInstallation, getAppId } = require('../services/installations');
+const { logEvent } = require('../services/activityLog');
 
 const log    = createLogger('routes:oauth');
 const router = Router();
@@ -22,14 +23,16 @@ router.get('/install-url', (req, res) => {
     return res.status(400).json({ ok: false, error: 'Missing OAuth env vars', missing });
   }
 
-  const url = new URL('https://marketplace.gohighlevel.com/oauth/chooselocation');
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('redirect_uri',  process.env.HIGHLEVEL_REDIRECT_URI);
-  url.searchParams.set('client_id',      process.env.HIGHLEVEL_CLIENT_ID);
-  url.searchParams.set('scope', 'voice-ai-dashboard.readonly voice-ai-agents.readonly voice-ai-agent-goals.readonly');
-  url.searchParams.set('user_type', 'Location');
+  const scope = process.env.HIGHLEVEL_APP_SCOPES
+    || 'voice-ai-dashboard.readonly voice-ai-agents.readonly voice-ai-agent-goals.readonly';
 
-  return res.json({ ok: true, installUrl: url.toString() });
+  const installUrl = highLevel.oauth.getAuthorizationUrl(
+    process.env.HIGHLEVEL_CLIENT_ID,
+    process.env.HIGHLEVEL_REDIRECT_URI,
+    scope
+  );
+
+  return res.json({ ok: true, installUrl });
 });
 
 // GET /oauth/callback
@@ -52,19 +55,14 @@ router.get('/oauth/callback', async (req, res) => {
   try {
     log.info('OAuth callback: exchanging code for access token...');
 
-    // GHL token endpoint requires application/x-www-form-urlencoded
-    const { data } = await axios.post(
-      'https://services.leadconnectorhq.com/oauth/token',
-      new URLSearchParams({
+    const data = await highLevel.oauth.getAccessToken({
         client_id:     process.env.HIGHLEVEL_CLIENT_ID,
         client_secret: process.env.HIGHLEVEL_CLIENT_SECRET,
         grant_type:    'authorization_code',
         code,
         redirect_uri:  process.env.HIGHLEVEL_REDIRECT_URI,
         user_type:     'Location',
-      }).toString(),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
+      });
 
     log.info('Token exchange succeeded. userType:', data.userType, 'locationId:', data.locationId);
 
@@ -78,6 +76,39 @@ router.get('/oauth/callback', async (req, res) => {
       await sessionStorage.setSession(data.companyId, data);
       log.info('Company token stored for:', data.companyId);
     }
+
+    if (data.locationId) {
+      await upsertInstallation({
+        appId: getAppId(),
+        locationId: data.locationId,
+        companyId: data.companyId ?? null,
+        userType: data.userType ?? 'Location',
+        tokenResourceId: data.locationId,
+        tokenPayload: data,
+        installContext: {
+          approvedLocations: data.approvedLocations ?? [],
+          planId: data.planId ?? null,
+          isBulkInstallation: Boolean(data.isBulkInstallation),
+          userId: data.userId ?? null,
+        },
+        rawPayload: data,
+      });
+    }
+
+    await logEvent({
+      locationId: data.locationId ?? null,
+      companyId: data.companyId ?? null,
+      eventType: 'oauth.callback',
+      status: 'success',
+      title: 'OAuth callback completed',
+      detail: data.locationId || data.companyId || 'install',
+      payload: {
+        locationId: data.locationId ?? null,
+        companyId: data.companyId ?? null,
+        userType: data.userType ?? null,
+        approvedLocations: data.approvedLocations ?? [],
+      },
+    });
 
     // Redirect to dashboard instead of showing raw JSON
     return res.redirect('/?installed=1');

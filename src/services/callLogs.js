@@ -4,6 +4,7 @@ const { highLevel } = require('../lib/ghl');
 const { sdkOptions } = require('./voiceAgents');
 const { pool } = require('../db/pool');
 const { createLogger } = require('../lib/logger');
+const { logEvent } = require('./activityLog');
 
 const log = createLogger('callLogs');
 
@@ -45,6 +46,12 @@ function parseTranscriptString(text) {
 }
 
 function normaliseCall(raw, locationId) {
+  const transcriptText = typeof raw.transcript === 'string'
+    ? raw.transcript
+    : Array.isArray(raw.transcript)
+      ? raw.transcript.map((entry) => `${entry.role ?? entry.speaker ?? 'unknown'}: ${entry.content ?? ''}`).join('\n')
+      : null;
+
   const transcript = typeof raw.transcript === 'string' && raw.transcript.trim()
     ? parseTranscriptString(raw.transcript)
     : Array.isArray(raw.transcript)
@@ -55,12 +62,18 @@ function normaliseCall(raw, locationId) {
     callId:          raw.id,
     agentId:         raw.agentId         ?? null,
     locationId,
+    contactId:       raw.contactId       ?? null,
+    fromNumber:      raw.fromNumber      ?? null,
     transcript:      transcript          ? JSON.stringify(transcript) : null,
+    transcriptText,
     summary:         raw.summary         ?? null,
     extractedData:   JSON.stringify(raw.extractedData  ?? null),
     executedActions: JSON.stringify(raw.executedCallActions ?? null),
     durationSeconds: raw.duration        ?? null,
     status:          raw.trialCall ? 'trial' : 'completed',
+    trialCall:       Boolean(raw.trialCall),
+    translation:     JSON.stringify(raw.translation ?? null),
+    messageId:       raw.messageId ?? null,
     startedAt:       raw.createdAt       ?? null,
     endedAt:         null,  // not provided by GHL SDK
     raw:             JSON.stringify(raw),
@@ -70,23 +83,31 @@ function normaliseCall(raw, locationId) {
 async function upsertCall(c) {
   await pool.query(
     `INSERT INTO call_logs
-       (call_id, agent_id, location_id, transcript, summary, extracted_data,
-        executed_actions, duration_seconds, status, started_at, ended_at, raw, synced_at)
-     VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7::jsonb,$8,$9,$10,$11,$12::jsonb,NOW())
+       (call_id, agent_id, location_id, contact_id, from_number, transcript, transcript_text, summary,
+        extracted_data, executed_actions, duration_seconds, status, trial_call, translation, message_id,
+        started_at, ended_at, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14::jsonb,$15,$16,$17,$18::jsonb,NOW())
      ON CONFLICT (call_id) DO UPDATE
        SET agent_id          = EXCLUDED.agent_id,
+           contact_id        = EXCLUDED.contact_id,
+           from_number       = EXCLUDED.from_number,
            transcript        = EXCLUDED.transcript,
+           transcript_text   = EXCLUDED.transcript_text,
            summary           = EXCLUDED.summary,
            extracted_data    = EXCLUDED.extracted_data,
            executed_actions  = EXCLUDED.executed_actions,
            duration_seconds  = EXCLUDED.duration_seconds,
            status            = EXCLUDED.status,
+           trial_call        = EXCLUDED.trial_call,
+           translation       = EXCLUDED.translation,
+           message_id        = EXCLUDED.message_id,
            started_at        = EXCLUDED.started_at,
            raw               = EXCLUDED.raw,
            synced_at         = NOW()`,
     [
-      c.callId, c.agentId, c.locationId, c.transcript, c.summary,
-      c.extractedData, c.executedActions, c.durationSeconds, c.status,
+      c.callId, c.agentId, c.locationId, c.contactId, c.fromNumber,
+      c.transcript, c.transcriptText, c.summary, c.extractedData, c.executedActions,
+      c.durationSeconds, c.status, c.trialCall, c.translation, c.messageId,
       c.startedAt, c.endedAt, c.raw,
     ]
   );
@@ -118,6 +139,15 @@ async function syncCallLogs(locationId, { agentId, page = 1, pageSize = 50 } = {
     await upsertCall(c);
   }
 
+  await logEvent({
+    locationId,
+    eventType: 'voice-calls.sync',
+    status: 'success',
+    title: 'Voice call logs synced',
+    detail: `${calls.length} call(s) refreshed from HighLevel`,
+    payload: { page, pageSize, total: data?.total ?? calls.length, agentId: agentId ?? null },
+  });
+
   return getCallsByLocation(locationId, { agentId, page, pageSize });
 }
 
@@ -129,8 +159,8 @@ async function getCallsByLocation(locationId, { agentId, page = 1, pageSize = 50
   const values = [locationId, pageSize, offset];
   let query = `
     SELECT
-      cl.call_id, cl.agent_id, cl.location_id, cl.summary,
-      cl.duration_seconds, cl.status, cl.started_at, cl.synced_at,
+      cl.call_id, cl.agent_id, cl.location_id, cl.contact_id, cl.from_number, cl.summary,
+      cl.duration_seconds, cl.status, cl.trial_call, cl.message_id, cl.started_at, cl.synced_at,
       va.name AS agent_name,
       ca.score, ca.success, ca.analyzed_at
     FROM call_logs cl
@@ -154,8 +184,16 @@ async function getCallsByLocation(locationId, { agentId, page = 1, pageSize = 50
  */
 async function getCallDetail(callId, locationId) {
   const cached = await pool.query(
-    `SELECT * FROM call_logs WHERE call_id = $1 LIMIT 1`,
-    [callId]
+    `SELECT
+       cl.*,
+       va.name AS agent_name,
+       va.prompt AS agent_prompt,
+       va.actions AS agent_actions
+     FROM call_logs cl
+     LEFT JOIN voice_agents va ON va.agent_id = cl.agent_id
+     WHERE cl.call_id = $1 AND cl.location_id = $2
+     LIMIT 1`,
+    [callId, locationId]
   );
   if (cached.rows.length > 0) return cached.rows[0];
 
@@ -169,8 +207,16 @@ async function getCallDetail(callId, locationId) {
   await upsertCall(c);
 
   const fresh = await pool.query(
-    `SELECT * FROM call_logs WHERE call_id = $1 LIMIT 1`,
-    [callId]
+    `SELECT
+       cl.*,
+       va.name AS agent_name,
+       va.prompt AS agent_prompt,
+       va.actions AS agent_actions
+     FROM call_logs cl
+     LEFT JOIN voice_agents va ON va.agent_id = cl.agent_id
+     WHERE cl.call_id = $1 AND cl.location_id = $2
+     LIMIT 1`,
+    [callId, locationId]
   );
   return fresh.rows[0] ?? null;
 }

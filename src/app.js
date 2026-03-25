@@ -5,8 +5,10 @@ const express = require('express');
 const { initDb }   = require('./db/init');
 const { pool }     = require('./db/pool');
 const { createLogger } = require('./lib/logger');
+const { resolveRequestContext, requireLocationAccess } = require('./middleware/locationAccess');
 
 // Route modules
+const contextRoutes   = require('./routes/context');
 const oauthRoutes     = require('./routes/oauth');
 const webhookRoutes   = require('./routes/webhooks');
 const locationRoutes  = require('./routes/locations');
@@ -14,7 +16,7 @@ const agentRoutes     = require('./routes/agents');
 const callRoutes      = require('./routes/calls');
 const analyzeRoutes   = require('./routes/analyze');
 const dashboardRoutes = require('./routes/dashboard');
-const simulateRoutes  = require('./routes/simulate');
+const activityRoutes  = require('./routes/activity');
 
 const log = createLogger('app');
 
@@ -36,11 +38,12 @@ async function createApp() {
   // as it re-stringifies it internally for HMAC verification.
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: false }));
+  app.use(resolveRequestContext);
 
   app.use('/webhooks/ghl', webhookRoutes);
 
-  // ─── Serve Vue dashboard from public/ ──────────────────────────────────
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+  // ─── Serve built Vue dashboard from client/dist/ ──────────────────────
+  app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 
   // ─── Health & info ──────────────────────────────────────────────────────
   app.get('/health', async (_req, res) => {
@@ -54,8 +57,10 @@ async function createApp() {
 
   // ─── OAuth ─────────────────────────────────────────────────────────────
   app.use('/', oauthRoutes);                          // /install-url, /oauth/callback
+  app.use('/api/context', contextRoutes);
 
   // ─── API — all location-scoped routes ──────────────────────────────────
+  app.use('/api/locations/:locationId', requireLocationAccess);
   app.use('/api/locations',                                     locationRoutes);
   app.use('/api/locations/:locationId/agents',                  agentRoutes);
   app.use('/api/locations/:locationId/calls',                   callRoutes);
@@ -68,7 +73,7 @@ async function createApp() {
   app.use('/api/locations/:locationId',                         analyzeRoutes);  // /analyze-pending
 
   app.use('/api/locations/:locationId/dashboard',               dashboardRoutes);
-  app.use('/api/locations/:locationId/simulate-call',           simulateRoutes);
+  app.use('/api/locations/:locationId/activity',                activityRoutes);
 
   // ─── 404 for unknown API routes ─────────────────────────────────────────
   app.use('/api', (_req, res) => {
@@ -77,7 +82,7 @@ async function createApp() {
 
   // ─── SPA fallback — send index.html for all other GET requests ──────────
   app.get('*', (_req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
   });
 
   // ─── Global error handler ───────────────────────────────────────────────

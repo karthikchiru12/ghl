@@ -15,7 +15,7 @@ const log = createLogger('dashboard');
 async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
   log.debug('Building dashboard summary for location:', locationId);
 
-  const [callStats, agentStats, topFailures, recentAnalyses, scoreTrend] = await Promise.all([
+  const [callStats, agentStats, topFailures, recentAnalyses, recentCalls, scoreTrend, actionTypes] = await Promise.all([
     // ─── Overall call stats ────────────────────────────────────────────────
     pool.query(
       `SELECT
@@ -23,7 +23,8 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
          COUNT(ca.call_id)                           AS analysed_calls,
          AVG(ca.score)::NUMERIC(5,1)                 AS avg_score,
          SUM(CASE WHEN ca.success THEN 1 ELSE 0 END) AS successful_calls,
-         AVG(cl.duration_seconds)::INT               AS avg_duration_seconds
+         AVG(cl.duration_seconds)::INT               AS avg_duration_seconds,
+         MAX(cl.started_at)                          AS last_call_at
        FROM call_logs cl
        LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
        WHERE cl.location_id = $1`,
@@ -35,6 +36,9 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
       `SELECT
          va.agent_id,
          va.name                                    AS agent_name,
+         va.status,
+         va.prompt,
+         jsonb_array_length(COALESCE(va.actions, '[]'::jsonb)) AS action_count,
          COUNT(cl.call_id)                          AS total_calls,
          COUNT(ca.call_id)                          AS analysed_calls,
          AVG(ca.score)::NUMERIC(5,1)                AS avg_score,
@@ -43,7 +47,7 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
        LEFT JOIN call_logs cl ON cl.agent_id = va.agent_id
        LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
        WHERE va.location_id = $1
-       GROUP BY va.agent_id, va.name
+       GROUP BY va.agent_id
        ORDER BY total_calls DESC`,
       [locationId]
     ),
@@ -77,6 +81,26 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
       [locationId, recentLimit]
     ),
 
+    pool.query(
+      `SELECT
+         cl.call_id,
+         cl.agent_id,
+         cl.summary,
+         cl.duration_seconds,
+         cl.started_at,
+         cl.from_number,
+         va.name AS agent_name,
+         ca.score,
+         ca.success
+       FROM call_logs cl
+       LEFT JOIN voice_agents va ON va.agent_id = cl.agent_id
+       LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
+       WHERE cl.location_id = $1
+       ORDER BY cl.started_at DESC NULLS LAST
+       LIMIT $2`,
+      [locationId, recentLimit]
+    ),
+
     // ─── 7-day daily avg score trend ──────────────────────────────────────
     pool.query(
       `SELECT
@@ -88,6 +112,23 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
          AND analyzed_at >= NOW() - INTERVAL '7 days'
        GROUP BY DATE_TRUNC('day', analyzed_at)::DATE
        ORDER BY day ASC`,
+      [locationId]
+    ),
+
+    pool.query(
+      `SELECT
+         action_type,
+         COUNT(*) AS frequency
+       FROM (
+         SELECT
+           jsonb_array_elements(COALESCE(executed_actions, '[]'::jsonb))->>'actionType' AS action_type
+         FROM call_logs
+         WHERE location_id = $1
+       ) actions
+       WHERE action_type IS NOT NULL
+       GROUP BY action_type
+       ORDER BY frequency DESC
+       LIMIT 8`,
       [locationId]
     ),
   ]);
@@ -106,10 +147,14 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
       successRate:        analysed > 0 ? Math.round((successful / analysed) * 100) : null,
       avgScore:           stats.avg_score ? parseFloat(stats.avg_score) : null,
       avgDurationSeconds: stats.avg_duration_seconds,
+      lastCallAt:         stats.last_call_at ?? null,
     },
     agentBreakdown: agentStats.rows.map((r) => ({
       agentId:       r.agent_id,
       agentName:     r.agent_name ?? r.agent_id,
+      status:        r.status ?? 'unknown',
+      promptPreview: r.prompt ? String(r.prompt).slice(0, 180) : null,
+      actionCount:   Number(r.action_count ?? 0),
       totalCalls:    Number(r.total_calls),
       analysedCalls: Number(r.analysed_calls),
       avgScore:      r.avg_score ? parseFloat(r.avg_score) : null,
@@ -123,10 +168,15 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
       frequency: Number(r.frequency),
     })),
     recentAnalyses: recentAnalyses.rows,
+    recentCalls: recentCalls.rows,
     scoreTrend: scoreTrend.rows.map((r) => ({
       day:      r.day,
       avgScore: parseFloat(r.avg_score),
       count:    Number(r.call_count),
+    })),
+    actionBreakdown: actionTypes.rows.map((row) => ({
+      actionType: row.action_type,
+      frequency: Number(row.frequency),
     })),
   };
 }

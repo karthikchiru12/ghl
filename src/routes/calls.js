@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
   const { locationId } = req.params;
   const { agentId, sync, limit = '50', page = '1' } = req.query;
   const doSync = sync === 'true';
-  const opts   = { agentId, limit: Number(limit), page: Number(page) };
+  const opts   = { agentId, pageSize: Number(limit), page: Number(page) };
 
   try {
     const calls = doSync

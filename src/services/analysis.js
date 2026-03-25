@@ -4,6 +4,7 @@ const { chatComplete, extractJson } = require('../lib/chutes');
 const { getCallDetail } = require('./callLogs');
 const { pool } = require('../db/pool');
 const { createLogger } = require('../lib/logger');
+const { logEvent } = require('./activityLog');
 
 const log = createLogger('analysis');
 
@@ -23,10 +24,35 @@ function buildAnalysisMessages(call, agent) {
     return String(t);
   })();
 
+  const configuredActions = Array.isArray(agent?.actions)
+    ? agent.actions
+    : (typeof agent?.actions === 'string'
+      ? JSON.parse(agent.actions || '[]')
+      : []);
+
+  const executedActions = Array.isArray(call.executed_actions)
+    ? call.executed_actions
+    : (typeof call.executed_actions === 'string'
+      ? JSON.parse(call.executed_actions || '[]')
+      : []);
+
   const agentContext = agent
     ? `Agent name: ${agent.name ?? 'Unknown'}
-Agent goals/KPIs: ${JSON.stringify(agent.goals ?? agent.successCriteria ?? 'Not provided')}
-Agent script excerpt: ${(agent.script ?? 'Not provided').slice(0, 800)}`
+Business name: ${agent.business_name ?? 'Not provided'}
+Welcome message: ${agent.welcome_message ?? 'Not provided'}
+Agent system prompt: ${(agent.prompt ?? agent.script ?? 'Not provided').slice(0, 2000)}
+Agent goals/KPIs: ${JSON.stringify(agent.goals ?? {}, null, 2)}
+Configured agent actions:
+${JSON.stringify(configuredActions, null, 2)}
+Agent metadata:
+${JSON.stringify({
+  voiceId: agent.voice_id ?? null,
+  language: agent.language ?? null,
+  patienceLevel: agent.patience_level ?? null,
+  maxCallDuration: agent.max_call_duration ?? null,
+  timezone: agent.timezone ?? null,
+  callEndWorkflowIds: agent.call_end_workflow_ids ?? [],
+}, null, 2)}`
     : 'No agent metadata available.';
 
   const systemPrompt = `You are an expert Voice AI quality analyst. Analyse the provided call transcript against the agent's goals and success criteria. Return ONLY a valid JSON object — no markdown, no explanation — matching this exact schema:
@@ -34,11 +60,20 @@ Agent script excerpt: ${(agent.script ?? 'Not provided').slice(0, 800)}`
 {
   "success": boolean,
   "score": integer between 0 and 100,
+  "summary_text": "2-3 sentence operator summary of what happened and why it matters",
   "failures": ["list of specific failures or policy violations"],
   "missed_opportunities": ["list of missed upsell/engagement opportunities"],
   "use_actions": ["segments or moments requiring human intervention or escalation"],
+  "transcript_highlights": [
+    {
+      "speaker": "agent|user",
+      "moment": "short quote or timestamp-like locator",
+      "reason": "why it matters"
+    }
+  ],
   "prompt_recommendations": ["specific changes to improve the agent prompt"],
   "script_recommendations": ["specific changes to improve the agent script or flow"],
+  "action_recommendations": ["specific changes to improve configured actions or action triggers"],
   "metrics": {
     "sentiment_overall": float between -1.0 (very negative) and 1.0 (very positive),
     "sentiment_start": float — customer sentiment at call opening,
@@ -60,12 +95,14 @@ ${agentContext}
 - Status: ${call.status ?? 'unknown'}
 - Duration: ${call.duration_seconds ?? 'unknown'} seconds
 - Summary: ${call.summary ?? 'None'}
+- Executed actions during call:
+${JSON.stringify(executedActions, null, 2)}
 
 ## Transcript
 ${transcriptText}
 
 ## Task
-Evaluate this call. Return strictly the JSON schema defined in your instructions.`;
+Evaluate this call. Use the configured prompt and actions as the evaluation baseline. Highlight where the agent prompt or action wiring is misaligned with the observed call. Return strictly the JSON schema defined in your instructions.`;
 
   return [
     { role: 'system', content: systemPrompt },
@@ -124,28 +161,54 @@ async function analyseCall(callId, locationId) {
   const result = {
     success:                Boolean(parsed.success),
     score:                  Math.min(100, Math.max(0, Number(parsed.score ?? 50))),
+    summary_text:           String(parsed.summary_text ?? '').trim(),
     failures:               Array.isArray(parsed.failures)               ? parsed.failures               : [],
     missed_opportunities:   Array.isArray(parsed.missed_opportunities)   ? parsed.missed_opportunities   : [],
     use_actions:            Array.isArray(parsed.use_actions)            ? parsed.use_actions            : [],
+    transcript_highlights:  Array.isArray(parsed.transcript_highlights)  ? parsed.transcript_highlights  : [],
     prompt_recommendations: Array.isArray(parsed.prompt_recommendations) ? parsed.prompt_recommendations : [],
     script_recommendations: Array.isArray(parsed.script_recommendations) ? parsed.script_recommendations : [],
+    action_recommendations: Array.isArray(parsed.action_recommendations) ? parsed.action_recommendations : [],
     metrics,
   };
 
+  const agentSnapshot = agent
+    ? {
+        agentId: agent.agent_id ?? call.agent_id ?? null,
+        name: agent.name ?? null,
+        businessName: agent.business_name ?? null,
+        welcomeMessage: agent.welcome_message ?? null,
+        prompt: agent.prompt ?? agent.script ?? null,
+        actions: agent.actions ?? [],
+        goals: agent.goals ?? {},
+        metadata: {
+          voiceId: agent.voice_id ?? null,
+          language: agent.language ?? null,
+          patienceLevel: agent.patience_level ?? null,
+          maxCallDuration: agent.max_call_duration ?? null,
+          timezone: agent.timezone ?? null,
+        },
+      }
+    : {};
+
   await pool.query(
     `INSERT INTO call_analyses
-       (call_id, location_id, agent_id, success, score, failures,
-        missed_opportunities, use_actions, prompt_recommendations,
-        script_recommendations, metrics, raw_response, analyzed_at)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,NOW())
+       (call_id, location_id, agent_id, success, score, summary_text, failures,
+        missed_opportunities, use_actions, transcript_highlights, prompt_recommendations,
+        script_recommendations, action_recommendations, agent_snapshot, metrics, raw_response, analyzed_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,$16,NOW())
      ON CONFLICT (call_id) DO UPDATE
        SET success                = EXCLUDED.success,
            score                  = EXCLUDED.score,
+           summary_text           = EXCLUDED.summary_text,
            failures               = EXCLUDED.failures,
            missed_opportunities   = EXCLUDED.missed_opportunities,
            use_actions            = EXCLUDED.use_actions,
+           transcript_highlights  = EXCLUDED.transcript_highlights,
            prompt_recommendations = EXCLUDED.prompt_recommendations,
            script_recommendations = EXCLUDED.script_recommendations,
+           action_recommendations = EXCLUDED.action_recommendations,
+           agent_snapshot         = EXCLUDED.agent_snapshot,
            metrics                = EXCLUDED.metrics,
            raw_response           = EXCLUDED.raw_response,
            analyzed_at            = NOW()`,
@@ -155,17 +218,34 @@ async function analyseCall(callId, locationId) {
       call.agent_id ?? null,
       result.success,
       result.score,
+      result.summary_text,
       JSON.stringify(result.failures),
       JSON.stringify(result.missed_opportunities),
       JSON.stringify(result.use_actions),
+      JSON.stringify(result.transcript_highlights),
       JSON.stringify(result.prompt_recommendations),
       JSON.stringify(result.script_recommendations),
+      JSON.stringify(result.action_recommendations),
+      JSON.stringify(agentSnapshot),
       JSON.stringify(result.metrics),
       raw,
     ]
   );
 
   log.info(`Analysis complete for call ${callId} — score: ${result.score}, success: ${result.success}`);
+  await logEvent({
+    locationId,
+    eventType: 'analysis.completed',
+    status: result.success ? 'success' : 'warn',
+    title: 'Call analysis completed',
+    detail: `${callId} scored ${result.score}`,
+    payload: {
+      callId,
+      agentId: call.agent_id ?? null,
+      score: result.score,
+      success: result.success,
+    },
+  });
   return { callId, locationId, ...result };
 }
 

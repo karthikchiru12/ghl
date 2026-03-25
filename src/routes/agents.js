@@ -1,7 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
-const { syncAgents, getAgentsByLocation } = require('../services/voiceAgents');
+const { syncAgents, getAgentsByLocation, getAgentDetail } = require('../services/voiceAgents');
 const { createLogger } = require('../lib/logger');
 
 const log = createLogger('routes:agents');
@@ -22,6 +22,21 @@ router.get('/', async (req, res) => {
     log.error(`Failed to fetch agents for ${locationId}:`, err.message);
     const status = err.status ?? 500;
     return res.status(status).json({ ok: false, error: err.message });
+  }
+});
+
+router.get('/:agentId', async (req, res) => {
+  const { locationId, agentId } = req.params;
+
+  try {
+    const agent = await getAgentDetail(agentId, locationId);
+    if (!agent) {
+      return res.status(404).json({ ok: false, error: 'Agent not found' });
+    }
+    return res.json({ ok: true, locationId, agent });
+  } catch (err) {
+    log.error(`Failed to fetch agent ${agentId} for ${locationId}:`, err.message);
+    return res.status(err.status ?? 500).json({ ok: false, error: err.message });
   }
 });
 
