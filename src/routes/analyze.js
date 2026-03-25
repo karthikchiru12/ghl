@@ -22,13 +22,14 @@ router.post('/:callId/analyze', async (req, res) => {
   }
 });
 
-// POST /api/locations/:locationId/analyze-pending
-// Analyse all calls without an existing analysis (up to 20)
+// POST /api/locations/:locationId/analyze-pending?limit=20
+// Analyse calls without an existing analysis (up to limit)
 router.post('/analyze-pending', async (req, res) => {
   const { locationId } = req.params;
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
 
   try {
-    const results = await analysePendingCalls(locationId);
+    const results = await analysePendingCalls(locationId, { limit });
     const succeeded = results.filter((r) => r.ok).length;
     const failed    = results.filter((r) => !r.ok).length;
     return res.json({ ok: true, summary: { total: results.length, succeeded, failed }, results });

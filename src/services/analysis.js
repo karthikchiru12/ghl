@@ -8,7 +8,7 @@ const { createLogger } = require('../lib/logger');
 const log = createLogger('analysis');
 
 /**
- * Build the analysis prompt for Minimax M2.5.
+ * Build the LLM analysis messages for Minimax M2.5.
  * Returns the messages array for the chat completion request.
  */
 function buildAnalysisMessages(call, agent) {
@@ -97,15 +97,15 @@ async function analyseCall(callId, locationId) {
     throw new Error(`LLM returned malformed JSON: ${e.message}`);
   }
 
-  // Enforce schema shape
+  // Enforce schema shape and bounds
   const result = {
     success:                Boolean(parsed.success),
     score:                  Math.min(100, Math.max(0, Number(parsed.score ?? 50))),
-    failures:               Array.isArray(parsed.failures)              ? parsed.failures              : [],
-    missed_opportunities:   Array.isArray(parsed.missed_opportunities)  ? parsed.missed_opportunities  : [],
-    use_actions:            Array.isArray(parsed.use_actions)           ? parsed.use_actions           : [],
-    prompt_recommendations: Array.isArray(parsed.prompt_recommendations)? parsed.prompt_recommendations: [],
-    script_recommendations: Array.isArray(parsed.script_recommendations)? parsed.script_recommendations: [],
+    failures:               Array.isArray(parsed.failures)               ? parsed.failures               : [],
+    missed_opportunities:   Array.isArray(parsed.missed_opportunities)   ? parsed.missed_opportunities   : [],
+    use_actions:            Array.isArray(parsed.use_actions)            ? parsed.use_actions            : [],
+    prompt_recommendations: Array.isArray(parsed.prompt_recommendations) ? parsed.prompt_recommendations : [],
+    script_recommendations: Array.isArray(parsed.script_recommendations) ? parsed.script_recommendations : [],
   };
 
   await pool.query(
@@ -144,30 +144,42 @@ async function analyseCall(callId, locationId) {
 }
 
 /**
- * Analyse all call_logs for a location that don't yet have an analysis.
- * Returns an array of results (success + errors).
+ * Analyse pending call_logs for a location (no existing analysis).
+ * Processes calls in batches of 3 concurrently to balance throughput and rate limits.
+ *
+ * @param {string} locationId
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<Array>}
  */
-async function analysePendingCalls(locationId) {
+async function analysePendingCalls(locationId, { limit = 20 } = {}) {
   const pending = await pool.query(
     `SELECT cl.call_id FROM call_logs cl
      LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
      WHERE cl.location_id = $1 AND ca.call_id IS NULL
      ORDER BY cl.started_at DESC
-     LIMIT 20`,
-    [locationId]
+     LIMIT $2`,
+    [locationId, limit]
   );
 
   log.info(`Analysing ${pending.rows.length} pending calls for location:`, locationId);
 
   const results = [];
-  for (const row of pending.rows) {
-    try {
-      const r = await analyseCall(row.call_id, locationId);
-      results.push({ callId: row.call_id, ok: true, score: r.score });
-    } catch (err) {
-      log.error(`Failed to analyse call ${row.call_id}:`, err.message);
-      results.push({ callId: row.call_id, ok: false, error: err.message });
-    }
+  const CONCURRENCY = 3;
+
+  for (let i = 0; i < pending.rows.length; i += CONCURRENCY) {
+    const batch = pending.rows.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map((row) => analyseCall(row.call_id, locationId))
+    );
+    settled.forEach((outcome, idx) => {
+      const callId = batch[idx].call_id;
+      if (outcome.status === 'fulfilled') {
+        results.push({ callId, ok: true, score: outcome.value.score });
+      } else {
+        log.error(`Failed to analyse call ${callId}:`, outcome.reason.message);
+        results.push({ callId, ok: false, error: outcome.reason.message });
+      }
+    });
   }
 
   return results;

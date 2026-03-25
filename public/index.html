@@ -19,12 +19,13 @@
         <span class="brand-name">Voice AI Copilot</span>
       </div>
       <div class="topbar-actions">
-        <select v-model="selectedLocation" @change="loadDashboard" class="location-select" :disabled="loading.locations" id="location-selector">
+        <select v-model="selectedLocation" class="location-select" :disabled="loading.locations" id="location-selector">
           <option value="">{{ loading.locations ? 'Loading...' : locations.length ? 'Select location' : 'No locations installed' }}</option>
           <option v-for="loc in locations" :key="loc.location_id" :value="loc.location_id">
             {{ loc.name || loc.location_id }}
           </option>
         </select>
+        <button @click="toggleAutoRefresh" class="btn btn-icon" :class="{ active: autoRefresh }" :title="autoRefresh ? 'Auto-refresh on (30s) — click to disable' : 'Enable auto-refresh'">↺</button>
         <button @click="installApp" class="btn btn-outline" id="install-btn">+ Install App</button>
         <div class="status-indicator">
           <span class="dot" :class="{ active: selectedLocation }"></span>
@@ -33,14 +34,14 @@
       </div>
     </header>
 
-    <!-- Error Toast -->
-    <div class="toast error-toast" v-if="error" @click="error = null">{{ error }}</div>
+    <!-- Toast notification -->
+    <div class="toast" v-if="toast" @click="toast = null" :class="toast.type + '-toast'">{{ toast.message }}</div>
 
     <!-- Main Dashboard -->
     <main class="main-content">
       <div class="content-wrapper">
 
-        <!-- KPI Overview -->
+        <!-- KPI Overview — 6 cards -->
         <section class="overview-grid">
           <div class="glass-card stat-card pulse-hover">
             <div class="stat-icon calls-icon"></div>
@@ -73,23 +74,80 @@
               <p>{{ summary.overview?.successRate != null ? summary.overview.successRate + '%' : '—' }}</p>
             </div>
           </div>
+          <div class="glass-card stat-card pulse-hover">
+            <div class="stat-icon score-icon"></div>
+            <div class="stat-info">
+              <h3>Avg Score</h3>
+              <p class="stat-score" :class="getScoreClass(summary.overview?.avgScore)">
+                {{ summary.overview?.avgScore ?? '—' }}
+              </p>
+            </div>
+          </div>
+          <div class="glass-card stat-card pulse-hover">
+            <div class="stat-icon duration-icon"></div>
+            <div class="stat-info">
+              <h3>Avg Duration</h3>
+              <p>{{ formatDuration(summary.overview?.avgDurationSeconds) }}</p>
+            </div>
+          </div>
         </section>
+
+        <!-- 7-Day Score Trend (only shown when data exists) -->
+        <div class="trend-card glass-card" v-if="sparklinePoints">
+          <div class="trend-meta">
+            <span class="trend-title">7-Day Score Trend</span>
+            <span class="trend-range" v-if="summary.scoreTrend?.length">
+              {{ summary.scoreTrend[0]?.day }} → today
+            </span>
+          </div>
+          <svg class="sparkline" viewBox="0 0 120 32" preserveAspectRatio="none" aria-label="7-day score trend sparkline">
+            <!-- Reference line at 50 (min passing score) -->
+            <line x1="0" y1="16" x2="120" y2="16" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="3,3"/>
+            <polyline
+              :points="sparklinePoints"
+              fill="none"
+              stroke="var(--primary)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <div class="trend-legend">
+            <span v-for="d in summary.scoreTrend" :key="d.day" class="trend-day" :title="d.day + ': ' + d.avgScore + ' avg (' + d.count + ' calls)'">
+              {{ Math.round(d.avgScore) }}
+            </span>
+          </div>
+        </div>
 
         <!-- Agent Performance + Recurring Issues -->
         <div class="data-split">
           <section class="glass-section agents-section">
             <div class="section-header">
-              <h2>Agent Performance</h2>
-              <button @click="syncAgents" class="btn btn-icon" title="Sync agents from GHL" :disabled="loading.agents" id="sync-agents-btn">⟳</button>
+              <h2>
+                Agent Performance
+                <span v-if="agentFilter" class="filter-badge">filtered</span>
+              </h2>
+              <div class="section-actions">
+                <button v-if="agentFilter" @click="agentFilter = ''" class="btn btn-sm btn-outline" title="Clear filter">✕ Clear</button>
+                <button @click="syncAgents" class="btn btn-icon" title="Sync agents from GHL" :disabled="loading.agents" id="sync-agents-btn">⟳</button>
+              </div>
             </div>
             <div class="agent-list" v-if="summary.agentBreakdown?.length">
-              <div class="agent-card" v-for="agent in summary.agentBreakdown" :key="agent.agentId">
+              <div
+                class="agent-card"
+                v-for="agent in summary.agentBreakdown"
+                :key="agent.agentId"
+                :class="{ 'agent-active': agentFilter === agent.agentId }"
+                @click="filterByAgent(agent.agentId)"
+                :title="'Filter by ' + agent.agentName"
+              >
                 <div class="agent-avatar">{{ (agent.agentName || 'A').charAt(0).toUpperCase() }}</div>
                 <div class="agent-details">
                   <h4>{{ agent.agentName }}</h4>
                   <div class="agent-stats">
-                    <span class="badge" :class="getScoreClass(agent.avgScore)">Score: {{ agent.avgScore ?? 'N/A' }}</span>
-                    <span>{{ agent.analysedCalls }} / {{ agent.totalCalls }} calls</span>
+                    <span class="badge" :class="getScoreClass(agent.avgScore)">{{ agent.avgScore ?? 'N/A' }}</span>
+                    <span>{{ agent.analysedCalls }}/{{ agent.totalCalls }} analysed</span>
+                    <span v-if="agent.successRate != null" class="agent-pass-rate">{{ agent.successRate }}% pass</span>
                   </div>
                 </div>
               </div>
@@ -114,29 +172,34 @@
         <!-- Recent Analyses -->
         <section class="glass-section recent-analyses">
           <div class="section-header">
-            <h2>Recent Analyses &amp; Insights</h2>
+            <h2>
+              Recent Analyses &amp; Insights
+              <span v-if="agentFilter" class="filter-badge">filtered</span>
+            </h2>
             <button @click="syncCalls" class="btn btn-sm btn-outline" :disabled="loading.calls" id="fetch-calls-btn">
               {{ loading.calls ? 'Fetching…' : 'Fetch Latest Calls' }}
             </button>
           </div>
+
           <div class="analyses-grid">
-            <div v-for="analysis in summary.recentAnalyses" :key="analysis.call_id" class="analysis-card">
+            <div v-for="analysis in filteredAnalyses" :key="analysis.call_id" class="analysis-card">
               <div class="analysis-header">
                 <div>
                   <span class="status-badge" :class="analysis.success ? 'success' : 'fail'">
                     {{ analysis.success ? 'Successful' : 'Failed' }}
                   </span>
                   <span class="call-time">{{ new Date(analysis.analyzed_at).toLocaleString() }}</span>
+                  <span v-if="analysis.agent_name" class="call-agent">{{ analysis.agent_name }}</span>
                 </div>
                 <div class="score-circle" :class="getScoreClass(analysis.score)">{{ analysis.score }}</div>
               </div>
               <div class="analysis-body">
                 <template v-if="analysis.use_actions?.length">
-                  <h4>⚠️ Requires Human Action</h4>
-                  <ul><li v-for="(act, i) in analysis.use_actions" :key="i">{{ act }}</li></ul>
+                  <h4>⚡ Requires Action</h4>
+                  <ul><li v-for="(act, i) in analysis.use_actions.slice(0, 2)" :key="i">{{ act }}</li></ul>
                 </template>
                 <template v-else-if="analysis.failures?.length">
-                  <h4>❌ Policy Failure</h4>
+                  <h4>❌ Failure Detected</h4>
                   <p>{{ analysis.failures[0] }}</p>
                 </template>
                 <template v-else>
@@ -144,12 +207,18 @@
                 </template>
               </div>
               <div class="analysis-footer">
-                <button @click="viewCallDetail(analysis.call_id)" class="btn btn-text">View Transcript &amp; Insights →</button>
+                <span class="call-duration">{{ formatDuration(analysis.duration_seconds) }}</span>
+                <button @click="viewCallDetail(analysis.call_id)" class="btn btn-text">View Insights →</button>
               </div>
             </div>
-            <div v-if="!summary.recentAnalyses?.length" class="empty-state">
-              No analyses yet. Fetch calls then click "Analyze Now".
+            <div v-if="!filteredAnalyses.length" class="empty-state col-span-full">
+              {{ agentFilter ? 'No analyses for selected agent.' : 'No analyses yet. Fetch calls then click "Analyze Now".' }}
             </div>
+          </div>
+
+          <!-- Load More -->
+          <div class="load-more" v-if="!agentFilter && (summary.recentAnalyses?.length ?? 0) >= analysesLimit">
+            <button @click="loadMoreAnalyses" class="btn btn-outline btn-sm">Load More</button>
           </div>
         </section>
 
@@ -160,40 +229,99 @@
     <div class="modal-backdrop" v-if="selectedCall" @click.self="selectedCall = null">
       <div class="modal">
         <header class="modal-header">
-          <h2>Call Analysis Detail</h2>
-          <button class="close-btn" @click="selectedCall = null">×</button>
+          <div>
+            <h2>Call Analysis Detail</h2>
+            <span v-if="selectedCallDetail?.agent_name" class="modal-agent-label">{{ selectedCallDetail.agent_name }}</span>
+          </div>
+          <div class="modal-header-actions">
+            <button @click="reAnalyzeCall" class="btn btn-sm" :disabled="loading.analyzing">
+              {{ loading.analyzing ? 'Analysing…' : '↺ Re-analyze' }}
+            </button>
+            <button class="close-btn" @click="selectedCall = null" title="Close (Esc)">×</button>
+          </div>
         </header>
+
         <div class="modal-body" v-if="selectedCallDetail">
           <div class="modal-split">
+
+            <!-- Transcript -->
             <div class="modal-transcript glass-panel">
               <h3>Transcript</h3>
               <div class="chat-flow">
-                <div class="chat-bubble" v-for="(msg, i) in selectedCallDetail.transcript" :key="i" :class="msg.role">
+                <div
+                  class="chat-bubble"
+                  v-for="(msg, i) in selectedCallDetail.transcript"
+                  :key="i"
+                  :class="msg.role"
+                >
                   <strong>{{ msg.role }}:</strong> {{ msg.content }}
                 </div>
               </div>
             </div>
+
+            <!-- AI Insights -->
             <div class="modal-insights glass-panel">
-              <h3>AI Insights</h3>
-              <div class="insight-score" :class="getScoreClass(selectedCallDetail.analysis?.score)">
-                Overall Score: {{ selectedCallDetail.analysis?.score ?? 'N/A' }}
+              <!-- Score + status header -->
+              <div class="modal-score-header">
+                <div class="score-circle score-lg" :class="getScoreClass(selectedCallDetail.analysis?.score)">
+                  {{ selectedCallDetail.analysis?.score ?? '—' }}
+                </div>
+                <div>
+                  <span class="status-badge" :class="selectedCallDetail.analysis?.success ? 'success' : 'fail'">
+                    {{ selectedCallDetail.analysis?.success ? 'Passed' : 'Failed' }}
+                  </span>
+                  <div class="modal-duration">{{ formatDuration(selectedCallDetail.duration_seconds) }}</div>
+                </div>
               </div>
-              <div class="insight-block" v-if="selectedCallDetail.analysis?.script_recommendations?.length">
-                <h4>📝 Script Recommendations</h4>
-                <ul><li v-for="(rec, i) in selectedCallDetail.analysis.script_recommendations" :key="i">{{ rec }}</li></ul>
+
+              <!-- No analysis state -->
+              <div v-if="!selectedCallDetail.analysis" class="empty-state" style="margin-top:1rem">
+                No analysis yet.
+                <button @click="reAnalyzeCall" class="btn btn-sm" style="margin-top:0.75rem;display:block">
+                  Run Analysis
+                </button>
               </div>
-              <div class="insight-block" v-if="selectedCallDetail.analysis?.prompt_recommendations?.length">
-                <h4>💡 Prompt Recommendations</h4>
-                <ul><li v-for="(rec, i) in selectedCallDetail.analysis.prompt_recommendations" :key="i">{{ rec }}</li></ul>
-              </div>
-              <div class="insight-block" v-if="selectedCallDetail.analysis?.missed_opportunities?.length">
-                <h4>🎯 Missed Opportunities</h4>
-                <ul><li v-for="(opp, i) in selectedCallDetail.analysis.missed_opportunities" :key="i">{{ opp }}</li></ul>
-              </div>
+
+              <!-- All 5 insight categories -->
+              <template v-else>
+                <div class="insight-block" v-if="selectedCallDetail.analysis.failures?.length">
+                  <h4>❌ Failures</h4>
+                  <ul>
+                    <li v-for="(f, i) in selectedCallDetail.analysis.failures" :key="i">{{ f }}</li>
+                  </ul>
+                </div>
+                <div class="insight-block" v-if="selectedCallDetail.analysis.use_actions?.length">
+                  <h4>⚡ Actions Required</h4>
+                  <ul>
+                    <li v-for="(a, i) in selectedCallDetail.analysis.use_actions" :key="i">{{ a }}</li>
+                  </ul>
+                </div>
+                <div class="insight-block" v-if="selectedCallDetail.analysis.missed_opportunities?.length">
+                  <h4>🎯 Missed Opportunities</h4>
+                  <ul>
+                    <li v-for="(opp, i) in selectedCallDetail.analysis.missed_opportunities" :key="i">{{ opp }}</li>
+                  </ul>
+                </div>
+                <div class="insight-block" v-if="selectedCallDetail.analysis.prompt_recommendations?.length">
+                  <h4>💡 Prompt Improvements</h4>
+                  <ul>
+                    <li v-for="(rec, i) in selectedCallDetail.analysis.prompt_recommendations" :key="i">{{ rec }}</li>
+                  </ul>
+                </div>
+                <div class="insight-block" v-if="selectedCallDetail.analysis.script_recommendations?.length">
+                  <h4>📝 Script Improvements</h4>
+                  <ul>
+                    <li v-for="(rec, i) in selectedCallDetail.analysis.script_recommendations" :key="i">{{ rec }}</li>
+                  </ul>
+                </div>
+              </template>
             </div>
+
           </div>
         </div>
-        <div class="modal-body" v-else>Loading details…</div>
+        <div class="modal-body" v-else>
+          <div class="empty-state">Loading details…</div>
+        </div>
       </div>
     </div>
 

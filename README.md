@@ -1,72 +1,200 @@
 # HighLevel Voice AI Observability Copilot
 
-A complete Voice AI observability suite designed to act as a "Validation Flywheel." It integrates seamlessly via GHL Marketplace OAuth, syncs active Voice Agents and Call Logs, and autonomously analyzes transcripts against agent-specific KPIs using Chutes AI (Minimax M2.5 model) to surface actionable insights.
+A "Validation Flywheel" that integrates with GHL Marketplace via OAuth, syncs Voice Agents and Call Logs, and autonomously analyses call transcripts against agent-specific KPIs using Chutes AI (Minimax M2.5) to surface actionable recommendations.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       Browser (Vue 3 SPA)                       │
+│  KPI Cards │ Score Trend │ Agent Filter │ Analyses Grid │ Modal  │
+└─────────────────────────┬───────────────────────────────────────┘
+                          │ REST / JSON
+┌─────────────────────────▼───────────────────────────────────────┐
+│                  Express.js  (Node 20, single process)           │
+│                                                                  │
+│  /install-url            OAuth install link                      │
+│  /oauth/callback         Token exchange + session persist        │
+│  /webhooks/ghl           INSTALL / UNINSTALL (HMAC verified)     │
+│  /api/locations/:id/     Agents, Calls, Analyses, Dashboard      │
+│  /health                 Liveness + DB connectivity check        │
+└──────┬────────────────────────┬───────────────────────────────┘
+       │                        │
+┌──────▼──────────┐    ┌────────▼──────────────────────────────┐
+│  GHL SDK v2.2   │    │          PostgreSQL 15                  │
+│  voiceAi.*      │    │  ghl_sessions  │ locations             │
+│  OAuth tokens   │    │  voice_agents  │ call_logs             │
+│  Webhook HMAC   │    │  call_analyses (JSONB insights)        │
+└─────────────────┘    └───────────────────────────────────────┘
+                                 │
+                       ┌─────────▼──────────────┐
+                       │  Chutes AI  (Minimax M2.5)│
+                       │  POST /v1/chat/completions│
+                       │  Structured JSON output   │
+                       │  Retry on 5xx errors      │
+                       └──────────────────────────┘
+```
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Vue 3 CDN (no build step) | Deploy as a single container — zero CI/CD complexity for SPA bundling |
+| PostgreSQL session storage | Overrides GHL SDK's in-memory default → survives restarts, multi-instance safe |
+| `ON CONFLICT DO UPDATE` everywhere | Idempotent resyncs — safe to hit "Fetch Calls" repeatedly without duplication |
+| Chutes Minimax M2.5 @ temp=0.15 | Low temperature forces deterministic JSON; M2.5 produces reliably parseable outputs |
+| Concurrency=3 batch analysis | Balances Chutes API rate limits against throughput for pending call batches |
+| Retry on LLM 5xx / ECONNRESET | Transient Chutes infrastructure hiccups shouldn't fail an entire batch |
+
+---
+
+## Core Observability Loop
+
+```
+[GHL Voice Agent call ends]
+         │
+         ▼
+  "Fetch Latest Calls"  ──►  GHL SDK voiceAi.getCallLogs()
+         │                   Upserted into call_logs table
+         ▼
+  "Analyze Now"         ──►  For each unanalysed call:
+         │                     1. Load transcript + agent context from DB
+         │                     2. Build structured prompt (goals, KPIs, transcript)
+         │                     3. POST to Chutes Minimax M2.5
+         │                     4. Parse + validate JSON response
+         │                     5. Upsert into call_analyses
+         ▼
+  Dashboard refresh     ──►  7 SQL queries (parallel):
+         │                     • Overview KPIs (total, analysed, success rate, avg score, avg duration)
+         │                     • Per-agent breakdown (score, pass rate)
+         │                     • Top recurring failure themes (JSONB aggregation)
+         │                     • Recent analyses (with agent name)
+         │                     • 7-day daily score trend (sparkline data)
+         ▼
+  [Analyst acts on recommendations]
+```
+
+---
 
 ## Features
 
-- **OAuth & Webhooks**: Retains GHL standard Marketplace OAuth and Webhook `INSTALL` flow.
-- **Auto Sync**: Native pull of Agents and Call Logs from GHL's Voice AI endpoints using the V2 SDK (`highLevel.voiceAi.*`).
-- **Autonomous Analysis**: Parses goals/KPIs from GHL agent prompts and evaluates call transcripts against them using the Minimax M2.5 LLM.
-- **Actionable Insights**: Strictly outputs JSON defining success/failure, a scaled score, missed opportunities, and actionable prompt/script tweaks.
-- **Unified Dashboard**: Fast, simple, and elegant Vue 3 SPA natively served by the Node.js backend to manage observability across multiple installed locations.
-- **Stateless & Scalable DB**: Full PostgreSQL schema for locations, sessions, agents, call logs, and call analyses.
+- **OAuth & Webhooks** — Standard GHL Marketplace OAuth flow with PostgreSQL-backed session storage for multi-tenancy. Webhook INSTALL/UNINSTALL events processed with HMAC signature verification.
+- **Voice Agent Sync** — Pulls agents via `highLevel.voiceAi.getAgents()`. Goals and KPIs extracted from `agentPrompt` for analysis context.
+- **Call Log Sync** — Pulls call logs via `highLevel.voiceAi.getCallLogs()`. Transcripts normalised to `[{role, content}]` format.
+- **Autonomous LLM Analysis** — Minimax M2.5 evaluates each transcript against its agent's KPIs and returns a 7-field structured analysis: `success`, `score`, `failures`, `missed_opportunities`, `use_actions`, `prompt_recommendations`, `script_recommendations`.
+- **Concurrent Batch Analysis** — Pending calls analysed 3 at a time via `Promise.allSettled`.
+- **Unified Dashboard** — Six KPI cards, 7-day score sparkline, per-agent drill-down (click to filter), top recurring failure aggregation, paginated analysis cards with agent name + call duration.
+- **Full Insight Modal** — All five LLM insight categories shown (failures, required actions, missed opportunities, prompt improvements, script improvements). Re-analyze without closing the modal.
+- **Auto-Refresh** — Optional 30-second polling for live environments.
+- **Health Endpoint** — `GET /health` verifies DB connectivity and reports `db: ok/error` for load balancer health checks.
 
-## Technical Architecture (Team of One approach)
+---
 
-### Product & Design
-For an MVP built by one person, speed and aesthetic impact are vital:
-- **Vue 3 (CDN) + Vanilla CSS**: Kept the UI dependency-free but achieved a polished, glassmorphism dark-mode aesthetic.
-- **Single Monolith Server**: Removing a build step for the frontend ensures this is trivially deployable on Dokploy as a single container, significantly reducing CI/CD overhead.
+## Team of One Ownership
 
-### Engineering & Persistence
-- **GHL API Client (v2.2.2)**: Heavily leverages the official SDK's interceptor and storage layers. Explicit bearer token bridging guarantees multi-tenancy holds up.
-- **Postgres Session Storage**: Overrode the default SDK in-memory storage. Added persistent relational schemas with idempotent `init.js` so zero manual DB migrations are required.
-- **Idempotent Logic**: `ON CONFLICT DO UPDATE` patterns are used everywhere. You can forcefully resync a location's agents or calls safely without duplicating data.
+### Product
+Scoped strictly to the two observability loops defined in the brief: Monitor (ingest + identify deviations) and Analyse (actionable recommendations). No scope creep into agent editing or CRM features. Each dashboard section maps directly to a decision a Voice AI manager would make: "Which agent is underperforming?", "What's the trending failure?", "What should I change in this agent's prompt?"
 
-### QA & LLM Stability
-- Prompt engineering dictates extremely rigid JSON outputs, preventing markdown leakage when parsing LLM observability recommendations.
-- Catch-all global error boundaries wrap express handlers to prevent fatal application crashes on unhandled GHL response schemas.
+### Design
+Dark-mode glassmorphism aesthetic chosen for visual hierarchy in dense data contexts. Color-coded scoring (green/yellow/red) provides instant health status at a glance. The modal uses a split-pane layout so transcript and insights are simultaneously readable without scrolling. Agent cards are clickable filters — discovery of this feature is intentional (hover reveals cursor + tooltip).
 
-## Current State: Real vs Mocked
-- **Real**: 
-  - OAuth flow, webhook payload signature processing, and token exchanges are 100% active.
-  - Syncing of locations, GHL Voice Agents (`/voice-ai/agents`), and Call Logs (`/voice-ai/dashboard/call-logs`).
-  - LLM analysis execution. `chutes.js` actually reaches out to `llm.chutes.ai/v1`, retrieves reasoning, validates JSON, and inserts into Postgres.
-  - Dashboard dynamically groups data by selected location and handles loading states legitimately.
-- **Mocked/Simulated**: 
-  - The Chutes "Whisper" integration is omitted as transcript-first ingestion handles data adequately, satisfying the primary assessment requirement.
-  - Webhook ingestion of individual calls in real-time is disabled for this assignment snippet—calls must be pulled via the dashboard's "Fetch Latest Calls" manual trigger for safety inside sandboxes.
+### Engineering
+- **No raw SQL strings scattered through routes** — all queries live in service functions (`services/`) with typed return shapes
+- **No secrets in code** — all config via environment variables, validated at startup
+- **Idempotency by default** — every sync operation is safe to re-run
+- **Error boundaries** — LLM parse failures, SDK errors, and DB errors all return structured `{ ok: false, error }` responses; no unhandled rejections crash the process
+- **Structured logging** — every module has a named logger (`createLogger('module-name')`) with level filtering via `LOG_LEVEL` env var
+
+### QA
+- LLM outputs are schema-validated and bounds-checked (score clamped 0-100, all array fields defaulted)
+- JSON extraction handles both raw JSON and markdown-fenced responses from the LLM
+- OAuth edge cases (no token, expired session) surface as `401` with clear messages rather than silent failures
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness + DB check |
+| `GET` | `/install-url` | Returns GHL OAuth install URL |
+| `GET` | `/oauth/callback` | Exchanges code for token, persists session |
+| `POST` | `/webhooks/ghl` | GHL INSTALL/UNINSTALL webhook receiver |
+| `GET` | `/api/locations` | List installed locations |
+| `GET` | `/api/locations/:id/agents?sync=true` | List (or sync) voice agents |
+| `GET` | `/api/locations/:id/calls?sync=true&limit=50` | List (or sync) call logs |
+| `GET` | `/api/locations/:id/calls/:callId` | Get single call detail |
+| `POST` | `/api/locations/:id/calls/:callId/analyze` | Analyse a specific call |
+| `GET` | `/api/locations/:id/calls/:callId/analysis` | Get stored analysis |
+| `POST` | `/api/locations/:id/analyze-pending?limit=20` | Batch-analyse unanalysed calls |
+| `GET` | `/api/locations/:id/dashboard?limit=10` | Dashboard summary (all KPIs) |
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `DATABASE_SSL` | No | `false` / `true` / `require` / `verify` |
+| `HIGHLEVEL_CLIENT_ID` | Yes* | GHL OAuth client ID |
+| `HIGHLEVEL_CLIENT_SECRET` | Yes* | GHL OAuth client secret |
+| `HIGHLEVEL_REDIRECT_URI` | Yes* | OAuth callback URL |
+| `HIGHLEVEL_PRIVATE_INTEGRATION_TOKEN` | Yes* | Alternative to OAuth — PIT auth |
+| `CHUTES_API_KEY` | Yes | Chutes AI API key |
+| `CHUTES_BASE_URL` | No | Defaults to `https://llm.chutes.ai/v1` |
+| `CHUTES_MINIMAX_MODEL` | No | Defaults to `minimaxai/Minimax-M2.5` |
+| `PORT` | No | Express port (default `3000`) |
+| `LOG_LEVEL` | No | `debug` / `info` / `warn` / `error` (default `info`) |
+
+*Either PIT **or** all three OAuth vars must be set.
+
+---
 
 ## Run Locally
 
-### Requirements
-- Node.js 18+
-- PostgreSQL server (running locally or Docker)
-
 ```bash
-# 1. Install Dependencies
+# 1. Install dependencies
 npm install
 
-# 2. Configure Environment Variables
+# 2. Configure environment
 cp .env.example .env
+# Edit .env — set DATABASE_URL, HIGHLEVEL_* OAuth vars, CHUTES_API_KEY
 
-# Make sure to edit .env to include your:
-# - DATABASE_URL (e.g. postgres://user:pass@localhost:5432/ghl)
-# - HIGHLEVEL_... OAuth or PIT vars 
-# - CHUTES_API_KEY
-```
-
-```bash
-# 3. Start the application
+# 3. Start (initialises DB schema automatically on first run)
 npm start
 ```
 
-### Deploying to Dokploy
-The included `Dockerfile` and `docker-compose.yml` enable 1-click deployment. Expose Port 3000 mapping internally, and ensure `DATABASE_URL` is set in the Dokploy environment tab.
+Visit `http://localhost:3000`. Navigate to `/install-url` to begin the OAuth install flow for your GHL sandbox location.
 
-1. Create an App in Dokploy.
-2. Link your Git repository.
-3. Add a PostgreSQL database in Dokploy, pass the connection string.
-4. Deploy!
+### Docker Compose
 
-Head to `/` on the deployed domain to view the application. Navigate to `/install-url` if you want to perform a manual OAuth grant sequence.
+```bash
+docker-compose up --build
+```
+
+Starts both the app (port 3000) and a PostgreSQL 15 instance. The app waits for the DB health check before starting.
+
+### Deploy to Dokploy
+
+1. Create an App in Dokploy, link this Git repository.
+2. Add a PostgreSQL database, copy the connection string to `DATABASE_URL` in the environment tab.
+3. Set all required env vars.
+4. Deploy — the `Dockerfile` handles the rest.
+
+---
+
+## What Is Real vs Mocked
+
+| Feature | Status | Notes |
+|---|---|---|
+| GHL OAuth token exchange | **Real** | Full PKCE-style code→token flow |
+| Webhook HMAC verification | **Real** | SDK's `WebhookManager` validates signatures |
+| Voice Agent sync | **Real** | `voiceAi.getAgents()` via SDK |
+| Call Log sync | **Real** | `voiceAi.getCallLogs()` via SDK |
+| LLM transcript analysis | **Real** | Calls `llm.chutes.ai/v1/chat/completions` |
+| Dashboard aggregation | **Real** | Live SQL across all linked tables |
+| Real-time call ingestion | **Pull-based** | Calls must be fetched via UI trigger (no push webhook per-call in sandbox) |
+| Audio transcription | **Not implemented** | Transcripts consumed as-is from GHL (no Whisper/STT layer needed) |

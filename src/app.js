@@ -3,6 +3,7 @@
 const path    = require('path');
 const express = require('express');
 const { initDb }   = require('./db/init');
+const { pool }     = require('./db/pool');
 const { createLogger } = require('./lib/logger');
 
 // Route modules
@@ -41,12 +42,13 @@ async function createApp() {
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // ─── Health & info ──────────────────────────────────────────────────────
-  app.get('/health', (_req, res) => {
-    res.json({
-      ok:      true,
-      service: 'ghl-voice-ai-copilot',
-      time:    new Date().toISOString(),
-    });
+  app.get('/health', async (_req, res) => {
+    try {
+      await pool.query('SELECT 1');
+      res.json({ ok: true, service: 'ghl-voice-ai-copilot', time: new Date().toISOString(), db: 'ok' });
+    } catch (err) {
+      res.status(503).json({ ok: false, service: 'ghl-voice-ai-copilot', time: new Date().toISOString(), db: 'error' });
+    }
   });
 
   // ─── OAuth ─────────────────────────────────────────────────────────────
