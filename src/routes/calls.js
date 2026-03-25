@@ -10,9 +10,14 @@ const router = Router({ mergeParams: true });
 // GET /api/locations/:locationId/calls?sync=true&agentId=&limit=&page=
 router.get('/', async (req, res) => {
   const { locationId } = req.params;
-  const { agentId, sync, limit = '50', page = '1' } = req.query;
+  const { agentId, sync, allPages, limit = '50', page = '1' } = req.query;
   const doSync = sync === 'true';
-  const opts   = { agentId, pageSize: Number(limit), page: Number(page) };
+  const opts   = {
+    agentId,
+    pageSize: Number(limit),
+    page: Number(page),
+    allPages: allPages === 'true',
+  };
 
   try {
     const calls = doSync

@@ -16,7 +16,8 @@
     currentKey: '',
     lastFetchedAt: 0,
     payload: null,
-    hydratedKeys: {},
+    syncStatus: '',
+    isSyncing: false,
   };
 
   const STYLE_ID = 'ghl-voice-ai-copilot-style';
@@ -45,15 +46,10 @@
         state.contextToken = state.contextToken || await getContextToken();
         if (!state.contextToken) return;
 
-        const shouldHydrate = !state.hydratedKeys[scope.key];
         const dashboardRes = await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/dashboard`, {
           limit: 8,
           agentId: scope.agentId || '',
-          hydrate: shouldHydrate ? 'true' : '',
         }));
-        if (shouldHydrate) {
-          state.hydratedKeys[scope.key] = true;
-        }
 
         const callsRes = await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls`, {
           limit: 8,
@@ -117,8 +113,9 @@
     return url.toString();
   }
 
-  async function fetchJson(url) {
+  async function fetchJson(url, options) {
     const res = await fetch(url, {
+      method: options?.method || 'GET',
       headers: {
         'x-ghl-context': state.contextToken,
       },
@@ -138,6 +135,42 @@
     decorateRows(payload);
   }
 
+  async function runSync(scope) {
+    if (state.isSyncing) return;
+
+    state.isSyncing = true;
+    state.syncStatus = 'Syncing call logs from HighLevel...';
+    if (state.payload) render(state.payload);
+
+    try {
+      await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls`, {
+        sync: 'true',
+        allPages: 'true',
+        limit: 100,
+        agentId: scope.agentId || '',
+      }));
+
+      state.syncStatus = 'Analyzing pending calls...';
+      if (state.payload) render(state.payload);
+
+      await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/analyze-pending`, {
+        all: 'true',
+        agentId: scope.agentId || '',
+      }), { method: 'POST' });
+
+      state.syncStatus = 'Sync complete.';
+      state.lastFetchedAt = 0;
+      await tick();
+    } catch (error) {
+      state.syncStatus = `Sync failed: ${error.message}`;
+      console.error('[GHL Copilot] Sync failed', error);
+      if (state.payload) render(state.payload);
+    } finally {
+      state.isSyncing = false;
+      if (state.payload) render(state.payload);
+    }
+  }
+
   function renderSummaryCard(payload) {
     const anchor = findSummaryAnchor();
     if (!anchor) return;
@@ -146,6 +179,7 @@
     const analyses = payload.dashboard.recentAnalyses || [];
     const useActionCount = analyses.filter((item) => asArray(item.use_actions).length > 0).length;
     const topFailures = (payload.dashboard.topFailures || []).slice(0, 3);
+    const scope = payload.scope || getRouteScope();
 
     let root = document.getElementById(SUMMARY_ID);
     if (!root) {
@@ -161,8 +195,14 @@
           <p class="ghl-copilot-kicker">Observability Copilot</p>
           <h3 class="ghl-copilot-title">Native call quality overlay</h3>
         </div>
-        <span class="ghl-copilot-chip">AI review</span>
+        <div class="ghl-copilot-actions">
+          <button class="ghl-copilot-button" data-ghl-sync-button ${state.isSyncing ? 'disabled' : ''}>
+            ${state.isSyncing ? 'Syncing...' : 'Sync & Analyze'}
+          </button>
+          <span class="ghl-copilot-chip">AI review</span>
+        </div>
       </div>
+      ${state.syncStatus ? `<p class="ghl-copilot-status">${escapeHtml(state.syncStatus)}</p>` : ''}
       <div class="ghl-copilot-stat-grid">
         ${renderStat('Analyzed Calls', formatNumber(overview.analysedCalls))}
         ${renderStat('Pending Review', formatNumber(overview.pendingCalls))}
@@ -186,6 +226,11 @@
         </div>
       </div>
     `;
+
+    const syncButton = root.querySelector('[data-ghl-sync-button]');
+    if (syncButton) {
+      syncButton.addEventListener('click', () => runSync(scope));
+    }
   }
 
   function renderLogsCard(payload) {

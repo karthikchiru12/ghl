@@ -26,10 +26,14 @@ router.post('/:callId/analyze', async (req, res) => {
 // Analyse calls without an existing analysis (up to limit)
 router.post('/analyze-pending', async (req, res) => {
   const { locationId } = req.params;
-  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+  const analyzeAll = req.query.all === 'true' || req.query.limit === 'all';
+  const limit = analyzeAll
+    ? null
+    : Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+  const agentId = req.query.agentId || null;
 
   try {
-    const results = await analysePendingCalls(locationId, { limit });
+    const results = await analysePendingCalls(locationId, { limit, agentId });
     const succeeded = results.filter((r) => r.ok).length;
     const failed    = results.filter((r) => !r.ok).length;
     return res.json({ ok: true, summary: { total: results.length, succeeded, failed }, results });

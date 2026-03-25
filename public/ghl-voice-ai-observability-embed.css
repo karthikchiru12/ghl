@@ -20,6 +20,35 @@
   margin-bottom: 16px;
 }
 
+.ghl-copilot-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ghl-copilot-button {
+  border: 1px solid #cfe0ff;
+  background: #f5f9ff;
+  color: #174ea6;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ghl-copilot-button[disabled] {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.ghl-copilot-status {
+  margin: -4px 0 12px;
+  color: #5b6b82;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .ghl-copilot-kicker {
   margin: 0 0 4px;
   color: #2563eb;
