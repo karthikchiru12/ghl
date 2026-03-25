@@ -120,6 +120,24 @@ createApp({
       }
     };
 
+    // ─── Transcript parser (mirrors backend parseTranscriptString) ────────
+
+    const parseTranscriptString = (text) => {
+      const turnPattern = /(?:^|\n)\s*(bot|human|agent|user|assistant|contact|ai|system)\s*:/i;
+      if (!turnPattern.test(text)) return [{ role: 'raw', content: text }];
+
+      const parts = text.split(/((?:^|\n)\s*(?:bot|human|agent|user|assistant|contact|ai|system)\s*:)/i);
+      const turns = [];
+      for (let i = 1; i < parts.length; i += 2) {
+        const roleRaw = parts[i].replace(/[\n:]/g, '').trim().toLowerCase();
+        const content = (parts[i + 1] ?? '').trim();
+        if (!content) continue;
+        const role = ['bot', 'agent', 'assistant', 'ai'].includes(roleRaw) ? 'agent' : 'user';
+        turns.push({ role, content });
+      }
+      return turns.length > 0 ? turns : [{ role: 'raw', content: text }];
+    };
+
     // ─── Call detail modal ─────────────────────────────────────────────────
 
     const viewCallDetail = async (callId) => {
@@ -135,6 +153,10 @@ createApp({
           let transcript = callData.call.transcript;
           if (typeof transcript === 'string') {
             try { transcript = JSON.parse(transcript); } catch (_) {}
+          }
+          // If still a string (unparseable), try splitting on role markers
+          if (typeof transcript === 'string') {
+            transcript = parseTranscriptString(transcript);
           }
           if (!Array.isArray(transcript)) transcript = [{ role: 'raw', content: String(transcript) }];
 

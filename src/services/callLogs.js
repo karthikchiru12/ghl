@@ -18,9 +18,35 @@ const log = createLogger('callLogs');
  *  Note: there is no startedAt/endedAt in the SDK model; `createdAt` is
  *  the call start time and `duration` is in seconds.
  */
+/**
+ * Try to split a raw transcript string like "bot:Hello human:Hi bot:How can I help?"
+ * into structured [{role, content}] turns. Falls back to a single 'raw' entry.
+ */
+function parseTranscriptString(text) {
+  // Match turn boundaries: "bot:", "human:", "agent:", "user:", "assistant:", "contact:" etc.
+  const turnPattern = /(?:^|\n)\s*(bot|human|agent|user|assistant|contact|ai|system)\s*:/i;
+  if (!turnPattern.test(text)) return [{ role: 'raw', content: text }];
+
+  const turns = [];
+  // Split on role prefixes while keeping the delimiter
+  const parts = text.split(/((?:^|\n)\s*(?:bot|human|agent|user|assistant|contact|ai|system)\s*:)/i);
+
+  for (let i = 1; i < parts.length; i += 2) {
+    const roleRaw = parts[i].replace(/[\n:]/g, '').trim().toLowerCase();
+    const content = (parts[i + 1] ?? '').trim();
+    if (!content) continue;
+
+    // Normalise role names to agent/user for consistent bubble styling
+    const role = ['bot', 'agent', 'assistant', 'ai'].includes(roleRaw) ? 'agent' : 'user';
+    turns.push({ role, content });
+  }
+
+  return turns.length > 0 ? turns : [{ role: 'raw', content: text }];
+}
+
 function normaliseCall(raw, locationId) {
   const transcript = typeof raw.transcript === 'string' && raw.transcript.trim()
-    ? [{ role: 'raw', content: raw.transcript }]
+    ? parseTranscriptString(raw.transcript)
     : Array.isArray(raw.transcript)
       ? raw.transcript
       : null;
@@ -149,4 +175,4 @@ async function getCallDetail(callId, locationId) {
   return fresh.rows[0] ?? null;
 }
 
-module.exports = { syncCallLogs, getCallsByLocation, getCallDetail, normaliseCall, upsertCall };
+module.exports = { syncCallLogs, getCallsByLocation, getCallDetail, normaliseCall, parseTranscriptString, upsertCall };
