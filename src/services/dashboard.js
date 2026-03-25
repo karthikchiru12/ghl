@@ -15,7 +15,7 @@ const log = createLogger('dashboard');
 async function getDashboardSummary(locationId, { recentLimit = 10, agentId = null } = {}) {
   log.debug('Building dashboard summary for location:', locationId);
 
-  const [callStats, agentStats, topFailures, recentAnalyses, recentCalls, scoreTrend, actionTypes] = await Promise.all([
+  const [callStats, agentStats, topFailures, recentAnalyses, recentCalls, scoreTrend, actionTypes, recommendations, missedOpportunities, transcriptHighlights, aggregatedMetrics] = await Promise.all([
     // ─── Overall call stats ────────────────────────────────────────────────
     pool.query(
       `SELECT
@@ -139,6 +139,77 @@ async function getDashboardSummary(locationId, { recentLimit = 10, agentId = nul
        LIMIT 8`,
       [locationId, agentId]
     ),
+
+    // ─── Aggregated recommendations (prompt / script / action) ───────────
+    pool.query(
+      `SELECT recommendation_text, recommendation_type, COUNT(*)::INT AS frequency
+       FROM (
+         SELECT jsonb_array_elements_text(prompt_recommendations) AS recommendation_text, 'prompt' AS recommendation_type
+         FROM call_analyses WHERE location_id = $1 AND ($2::TEXT IS NULL OR agent_id = $2)
+           AND jsonb_array_length(COALESCE(prompt_recommendations, '[]'::jsonb)) > 0
+         UNION ALL
+         SELECT jsonb_array_elements_text(script_recommendations), 'script'
+         FROM call_analyses WHERE location_id = $1 AND ($2::TEXT IS NULL OR agent_id = $2)
+           AND jsonb_array_length(COALESCE(script_recommendations, '[]'::jsonb)) > 0
+         UNION ALL
+         SELECT jsonb_array_elements_text(action_recommendations), 'action'
+         FROM call_analyses WHERE location_id = $1 AND ($2::TEXT IS NULL OR agent_id = $2)
+           AND jsonb_array_length(COALESCE(action_recommendations, '[]'::jsonb)) > 0
+       ) sub
+       GROUP BY recommendation_text, recommendation_type
+       ORDER BY frequency DESC
+       LIMIT 15`,
+      [locationId, agentId]
+    ),
+
+    // ─── Aggregated missed opportunities ─────────────────────────────────
+    pool.query(
+      `SELECT opportunity_text, COUNT(*)::INT AS frequency
+       FROM (
+         SELECT jsonb_array_elements_text(missed_opportunities) AS opportunity_text
+         FROM call_analyses WHERE location_id = $1 AND ($2::TEXT IS NULL OR agent_id = $2)
+           AND jsonb_array_length(COALESCE(missed_opportunities, '[]'::jsonb)) > 0
+       ) sub
+       GROUP BY opportunity_text
+       ORDER BY frequency DESC
+       LIMIT 8`,
+      [locationId, agentId]
+    ),
+
+    // ─── Recent transcript highlights ────────────────────────────────────
+    pool.query(
+      `SELECT
+         h->>'speaker' AS speaker,
+         h->>'moment'  AS moment,
+         h->>'reason'  AS reason,
+         ca.call_id,
+         ca.agent_id,
+         va.name AS agent_name
+       FROM call_analyses ca
+       CROSS JOIN LATERAL jsonb_array_elements(ca.transcript_highlights) AS h
+       LEFT JOIN voice_agents va ON va.agent_id = ca.agent_id
+       WHERE ca.location_id = $1
+         AND ($2::TEXT IS NULL OR ca.agent_id = $2)
+         AND jsonb_array_length(COALESCE(ca.transcript_highlights, '[]'::jsonb)) > 0
+       ORDER BY ca.analyzed_at DESC
+       LIMIT 10`,
+      [locationId, agentId]
+    ),
+
+    // ─── Aggregated analysis metrics ─────────────────────────────────────
+    pool.query(
+      `SELECT
+         AVG((metrics->>'sentiment_overall')::NUMERIC)::NUMERIC(3,2)   AS avg_sentiment,
+         AVG((metrics->>'empathy_score')::NUMERIC)::NUMERIC(4,1)       AS avg_empathy,
+         AVG((metrics->>'script_adherence')::NUMERIC)::NUMERIC(4,1)    AS avg_script_adherence,
+         AVG((metrics->>'customer_effort')::NUMERIC)::NUMERIC(3,1)     AS avg_customer_effort,
+         SUM(CASE WHEN (metrics->>'resolution_detected')::BOOLEAN THEN 1 ELSE 0 END)::INT AS resolved_count,
+         COUNT(*) FILTER (WHERE metrics IS NOT NULL AND metrics != '{}'::jsonb)::INT AS metrics_count
+       FROM call_analyses
+       WHERE location_id = $1
+         AND ($2::TEXT IS NULL OR agent_id = $2)`,
+      [locationId, agentId]
+    ),
   ]);
 
   const stats      = callStats.rows[0];
@@ -187,6 +258,29 @@ async function getDashboardSummary(locationId, { recentLimit = 10, agentId = nul
       actionType: row.action_type,
       frequency: Number(row.frequency),
     })),
+    recommendations: {
+      prompt: recommendations.rows.filter((r) => r.recommendation_type === 'prompt').map((r) => ({ text: r.recommendation_text, frequency: r.frequency })),
+      script: recommendations.rows.filter((r) => r.recommendation_type === 'script').map((r) => ({ text: r.recommendation_text, frequency: r.frequency })),
+      action: recommendations.rows.filter((r) => r.recommendation_type === 'action').map((r) => ({ text: r.recommendation_text, frequency: r.frequency })),
+    },
+    missedOpportunities: missedOpportunities.rows.map((r) => ({
+      text: r.opportunity_text,
+      frequency: r.frequency,
+    })),
+    transcriptHighlights: transcriptHighlights.rows,
+    metrics: (() => {
+      const m = aggregatedMetrics.rows[0];
+      if (!m || !m.metrics_count) return null;
+      return {
+        avgSentiment:        m.avg_sentiment != null ? parseFloat(m.avg_sentiment) : null,
+        avgEmpathy:          m.avg_empathy != null ? parseFloat(m.avg_empathy) : null,
+        avgScriptAdherence:  m.avg_script_adherence != null ? parseFloat(m.avg_script_adherence) : null,
+        avgCustomerEffort:   m.avg_customer_effort != null ? parseFloat(m.avg_customer_effort) : null,
+        resolvedCount:       m.resolved_count ?? 0,
+        metricsCount:        m.metrics_count ?? 0,
+        resolutionRate:      m.metrics_count > 0 ? Math.round((m.resolved_count / m.metrics_count) * 100) : null,
+      };
+    })(),
   };
 }
 
