@@ -770,6 +770,141 @@ body {
 .error-toast   { background: var(--danger); }
 .success-toast { background: var(--accent); }
 
+/* ─── Call Quality Metrics Grid ─────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem;
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: center;
+  padding: 6px 4px;
+}
+
+.metric-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.metric-positive { color: #3fb950; }
+.metric-neutral  { color: #d29922; }
+.metric-negative { color: #ff7b72; }
+
+.metric-tag {
+  font-size: 0.72rem;
+  background: rgba(94, 106, 210, 0.15);
+  color: var(--primary);
+  padding: 1px 6px;
+  border-radius: 8px;
+  display: inline-block;
+  text-transform: capitalize;
+}
+
+/* ─── Simulate Call Modal ──────────────────────────────────────────────── */
+.simulate-modal {
+  max-width: 480px;
+}
+
+.simulate-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
+}
+
+.form-group {
+  margin-bottom: 1.25rem;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.record-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 0;
+}
+
+.record-btn {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 3px solid var(--border-color);
+  background: rgba(255,255,255,0.03);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.record-btn:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.record-btn.recording {
+  border-color: var(--danger);
+  background: rgba(248, 81, 73, 0.1);
+  animation: pulse-ring 1.5s ease-in-out infinite;
+}
+
+.record-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.4); }
+  70%  { box-shadow: 0 0 0 12px rgba(248, 81, 73, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0); }
+}
+
+.simulate-status {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ─── Embed / iframe mode ──────────────────────────────────────────────── */
+.embed-mode {
+  background: transparent;
+}
+.embed-mode .content-wrapper {
+  padding: 1rem;
+}
+
 /* ─── Empty states ─────────────────────────────────────────────────────── */
 .empty-state {
   text-align: center;

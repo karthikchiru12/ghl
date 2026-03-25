@@ -14,6 +14,7 @@ const agentRoutes     = require('./routes/agents');
 const callRoutes      = require('./routes/calls');
 const analyzeRoutes   = require('./routes/analyze');
 const dashboardRoutes = require('./routes/dashboard');
+const simulateRoutes  = require('./routes/simulate');
 
 const log = createLogger('app');
 
@@ -33,7 +34,7 @@ async function createApp() {
   // ─── Body parsing ───────────────────────────────────────────────────────
   // The GHL SDK WebhookManager surprisingly expects req.body to be parsed already,
   // as it re-stringifies it internally for HMAC verification.
-  app.use(express.json());
+  app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: false }));
 
   app.use('/webhooks/ghl', webhookRoutes);
@@ -67,6 +68,7 @@ async function createApp() {
   app.use('/api/locations/:locationId',                         analyzeRoutes);  // /analyze-pending
 
   app.use('/api/locations/:locationId/dashboard',               dashboardRoutes);
+  app.use('/api/locations/:locationId/simulate-call',           simulateRoutes);
 
   // ─── 404 for unknown API routes ─────────────────────────────────────────
   app.use('/api', (_req, res) => {

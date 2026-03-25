@@ -38,7 +38,18 @@ Agent script excerpt: ${(agent.script ?? 'Not provided').slice(0, 800)}`
   "missed_opportunities": ["list of missed upsell/engagement opportunities"],
   "use_actions": ["segments or moments requiring human intervention or escalation"],
   "prompt_recommendations": ["specific changes to improve the agent prompt"],
-  "script_recommendations": ["specific changes to improve the agent script or flow"]
+  "script_recommendations": ["specific changes to improve the agent script or flow"],
+  "metrics": {
+    "sentiment_overall": float between -1.0 (very negative) and 1.0 (very positive),
+    "sentiment_start": float — customer sentiment at call opening,
+    "sentiment_end": float — customer sentiment at call closing,
+    "resolution_detected": boolean — was the customer's issue fully resolved,
+    "talk_listen_ratio": float 0-1 — proportion of agent words to total words,
+    "customer_effort": integer 1-5 — effort customer expended (1=effortless 5=extreme),
+    "empathy_score": integer 0-100 — how well agent acknowledged emotions and showed understanding,
+    "script_adherence": integer 0-100 — how closely agent followed its defined script/flow,
+    "call_category": string — primary reason: "support"|"sales"|"billing"|"inquiry"|"complaint"|"scheduling"|"other"
+  }
 }`;
 
   const userMessage = `## Agent Context
@@ -87,7 +98,7 @@ async function analyseCall(callId, locationId) {
   }
 
   const messages = buildAnalysisMessages(call, agent);
-  const raw = await chatComplete(messages, { maxTokens: 1500, temperature: 0.15 });
+  const raw = await chatComplete(messages, { maxTokens: 2000, temperature: 0.15 });
 
   let parsed;
   try {
@@ -98,6 +109,18 @@ async function analyseCall(callId, locationId) {
   }
 
   // Enforce schema shape and bounds
+  const metrics = parsed.metrics && typeof parsed.metrics === 'object' ? {
+    sentiment_overall:   Number(parsed.metrics.sentiment_overall  ?? 0),
+    sentiment_start:     Number(parsed.metrics.sentiment_start    ?? 0),
+    sentiment_end:       Number(parsed.metrics.sentiment_end      ?? 0),
+    resolution_detected: Boolean(parsed.metrics.resolution_detected),
+    talk_listen_ratio:   Math.min(1, Math.max(0, Number(parsed.metrics.talk_listen_ratio ?? 0.5))),
+    customer_effort:     Math.min(5, Math.max(1, Number(parsed.metrics.customer_effort   ?? 3))),
+    empathy_score:       Math.min(100, Math.max(0, Number(parsed.metrics.empathy_score   ?? 50))),
+    script_adherence:    Math.min(100, Math.max(0, Number(parsed.metrics.script_adherence ?? 50))),
+    call_category:       String(parsed.metrics.call_category ?? 'other'),
+  } : {};
+
   const result = {
     success:                Boolean(parsed.success),
     score:                  Math.min(100, Math.max(0, Number(parsed.score ?? 50))),
@@ -106,14 +129,15 @@ async function analyseCall(callId, locationId) {
     use_actions:            Array.isArray(parsed.use_actions)            ? parsed.use_actions            : [],
     prompt_recommendations: Array.isArray(parsed.prompt_recommendations) ? parsed.prompt_recommendations : [],
     script_recommendations: Array.isArray(parsed.script_recommendations) ? parsed.script_recommendations : [],
+    metrics,
   };
 
   await pool.query(
     `INSERT INTO call_analyses
        (call_id, location_id, agent_id, success, score, failures,
         missed_opportunities, use_actions, prompt_recommendations,
-        script_recommendations, raw_response, analyzed_at)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,NOW())
+        script_recommendations, metrics, raw_response, analyzed_at)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,NOW())
      ON CONFLICT (call_id) DO UPDATE
        SET success                = EXCLUDED.success,
            score                  = EXCLUDED.score,
@@ -122,6 +146,7 @@ async function analyseCall(callId, locationId) {
            use_actions            = EXCLUDED.use_actions,
            prompt_recommendations = EXCLUDED.prompt_recommendations,
            script_recommendations = EXCLUDED.script_recommendations,
+           metrics                = EXCLUDED.metrics,
            raw_response           = EXCLUDED.raw_response,
            analyzed_at            = NOW()`,
     [
@@ -135,6 +160,7 @@ async function analyseCall(callId, locationId) {
       JSON.stringify(result.use_actions),
       JSON.stringify(result.prompt_recommendations),
       JSON.stringify(result.script_recommendations),
+      JSON.stringify(result.metrics),
       raw,
     ]
   );

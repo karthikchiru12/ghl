@@ -13,6 +13,21 @@ createApp({
     const autoRefresh        = ref(false);
     let   refreshTimer       = null;
 
+    // Embed mode — detect from URL params (GHL passes ?locationId=xxx when loading in iframe)
+    const urlParams  = new URLSearchParams(window.location.search);
+    const embedMode  = ref(urlParams.has('embed') || urlParams.has('locationId'));
+    const urlLocId   = urlParams.get('locationId');
+
+    // Simulate call state
+    const showSimulate       = ref(false);
+    const simulateAgent      = ref('');
+    const isRecording        = ref(false);
+    const recordingTime      = ref(0);
+    const simulateStatus     = ref('');
+    let   mediaRecorder      = null;
+    let   recordingChunks    = [];
+    let   recordingTimer     = null;
+
     const loading = ref({ locations: false, agents: false, calls: false, analyzing: false });
 
     // ─── Toast helpers ─────────────────────────────────────────────────────
@@ -196,6 +211,95 @@ createApp({
       }
     };
 
+    // ─── Simulate Call (browser recording → Whisper → DB) ─────────────────
+
+    const toggleRecording = async () => {
+      if (isRecording.value) {
+        mediaRecorder.stop();
+        isRecording.value = false;
+        clearInterval(recordingTimer);
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        recordingChunks = [];
+        recordingTime.value = 0;
+        simulateStatus.value = '';
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordingChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          simulateStatus.value = 'Transcribing with Whisper...';
+
+          const blob = new Blob(recordingChunks, { type: mediaRecorder.mimeType });
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64 = reader.result.split(',')[1];
+            try {
+              const data = await apiFetch(
+                `/api/locations/${selectedLocation.value}/simulate-call`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ audioBase64: base64, agentId: simulateAgent.value || null }),
+                }
+              );
+              simulateStatus.value = '';
+              showSuccess(`Call saved (${data.duration}s) — ready to analyze`);
+              await loadDashboard();
+              showSimulate.value = false;
+            } catch (err) {
+              simulateStatus.value = 'Failed: ' + err.message;
+            }
+          };
+          reader.readAsDataURL(blob);
+        };
+
+        mediaRecorder.start();
+        isRecording.value = true;
+        recordingTimer = setInterval(() => { recordingTime.value++; }, 1000);
+      } catch (err) {
+        showError('Microphone access denied: ' + err.message);
+      }
+    };
+
+    const closeSimulate = () => {
+      if (isRecording.value && mediaRecorder) {
+        mediaRecorder.stop();
+        isRecording.value = false;
+        clearInterval(recordingTimer);
+      }
+      showSimulate.value = false;
+      simulateStatus.value = '';
+    };
+
+    // ─── Metrics helpers ───────────────────────────────────────────────────
+
+    const sentimentLabel = (val) => {
+      if (val == null) return '—';
+      const n = Number(val);
+      if (n >= 0.3)  return 'Positive';
+      if (n >= -0.3) return 'Neutral';
+      return 'Negative';
+    };
+
+    const sentimentClass = (val) => {
+      if (val == null) return '';
+      const n = Number(val);
+      if (n >= 0.3)  return 'metric-positive';
+      if (n >= -0.3) return 'metric-neutral';
+      return 'metric-negative';
+    };
+
+    const effortLabel = (val) => {
+      const labels = { 1: 'Effortless', 2: 'Easy', 3: 'Moderate', 4: 'Difficult', 5: 'Extreme' };
+      return labels[val] ?? '—';
+    };
+
     // ─── Filtering ─────────────────────────────────────────────────────────
 
     const filterByAgent = (agentId) => {
@@ -276,6 +380,10 @@ createApp({
     onMounted(async () => {
       window.addEventListener('keydown', handleKeydown);
       await fetchLocations();
+      // If GHL passed locationId via URL (iframe embed), auto-select it
+      if (urlLocId && locations.value.some((l) => l.location_id === urlLocId)) {
+        selectedLocation.value = urlLocId;
+      }
       if (selectedLocation.value) loadDashboard();
     });
 
@@ -284,6 +392,14 @@ createApp({
       selectedCall, selectedCallDetail,
       agentFilter, analysesLimit, autoRefresh,
       filteredAnalyses, sparklinePoints,
+      // Embed mode
+      embedMode,
+      // Simulate call
+      showSimulate, simulateAgent, isRecording, recordingTime, simulateStatus,
+      toggleRecording, closeSimulate,
+      // Metrics helpers
+      sentimentLabel, sentimentClass, effortLabel,
+      // Core actions
       fetchLocations, loadDashboard, loadMoreAnalyses,
       syncAgents, syncCalls, analyzePending,
       viewCallDetail, reAnalyzeCall, installApp,

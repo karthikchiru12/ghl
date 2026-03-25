@@ -10,10 +10,10 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
 </head>
 <body>
-  <div id="app" v-cloak>
+  <div id="app" v-cloak :class="{ 'embed-mode': embedMode }">
 
-    <!-- Top Navigation Bar -->
-    <header class="topbar">
+    <!-- Top Navigation Bar (hidden in embed/iframe mode) -->
+    <header class="topbar" v-if="!embedMode">
       <div class="brand">
         <div class="logo"></div>
         <span class="brand-name">Voice AI Copilot</span>
@@ -26,6 +26,7 @@
           </option>
         </select>
         <button @click="toggleAutoRefresh" class="btn btn-icon" :class="{ active: autoRefresh }" :title="autoRefresh ? 'Auto-refresh on (30s) — click to disable' : 'Enable auto-refresh'">↺</button>
+        <button @click="showSimulate = true" class="btn btn-outline" :disabled="!selectedLocation" title="Record a mock call via browser mic">🎙 Simulate Call</button>
         <button @click="installApp" class="btn btn-outline" id="install-btn">+ Install App</button>
         <div class="status-indicator">
           <span class="dot" :class="{ active: selectedLocation }"></span>
@@ -284,6 +285,56 @@
 
               <!-- All 5 insight categories -->
               <template v-else>
+                <!-- Call Quality Metrics -->
+                <div class="metrics-grid" v-if="selectedCallDetail.analysis.metrics && Object.keys(selectedCallDetail.analysis.metrics).length">
+                  <div class="metric-item">
+                    <span class="metric-label">Sentiment</span>
+                    <span class="metric-value" :class="sentimentClass(selectedCallDetail.analysis.metrics.sentiment_overall)">
+                      {{ sentimentLabel(selectedCallDetail.analysis.metrics.sentiment_overall) }}
+                    </span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Resolution</span>
+                    <span class="metric-value" :class="selectedCallDetail.analysis.metrics.resolution_detected ? 'metric-positive' : 'metric-negative'">
+                      {{ selectedCallDetail.analysis.metrics.resolution_detected ? 'Resolved' : 'Unresolved' }}
+                    </span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Talk:Listen</span>
+                    <span class="metric-value">
+                      {{ Math.round((selectedCallDetail.analysis.metrics.talk_listen_ratio ?? 0.5) * 100) }}:{{ Math.round((1 - (selectedCallDetail.analysis.metrics.talk_listen_ratio ?? 0.5)) * 100) }}
+                    </span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Effort</span>
+                    <span class="metric-value" :class="(selectedCallDetail.analysis.metrics.customer_effort ?? 3) <= 2 ? 'metric-positive' : (selectedCallDetail.analysis.metrics.customer_effort ?? 3) >= 4 ? 'metric-negative' : 'metric-neutral'">
+                      {{ effortLabel(selectedCallDetail.analysis.metrics.customer_effort) }}
+                    </span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Empathy</span>
+                    <span class="metric-value" :class="getScoreClass(selectedCallDetail.analysis.metrics.empathy_score)">
+                      {{ selectedCallDetail.analysis.metrics.empathy_score ?? '—' }}
+                    </span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Script</span>
+                    <span class="metric-value" :class="getScoreClass(selectedCallDetail.analysis.metrics.script_adherence)">
+                      {{ selectedCallDetail.analysis.metrics.script_adherence ?? '—' }}
+                    </span>
+                  </div>
+                  <div class="metric-item" v-if="selectedCallDetail.analysis.metrics.call_category">
+                    <span class="metric-label">Category</span>
+                    <span class="metric-value metric-tag">{{ selectedCallDetail.analysis.metrics.call_category }}</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">Sent. Arc</span>
+                    <span class="metric-value" :class="(selectedCallDetail.analysis.metrics.sentiment_end ?? 0) > (selectedCallDetail.analysis.metrics.sentiment_start ?? 0) ? 'metric-positive' : 'metric-negative'">
+                      {{ (selectedCallDetail.analysis.metrics.sentiment_end ?? 0) > (selectedCallDetail.analysis.metrics.sentiment_start ?? 0) ? 'Improving' : 'Declining' }}
+                    </span>
+                  </div>
+                </div>
+
                 <div class="insight-block" v-if="selectedCallDetail.analysis.failures?.length">
                   <h4>❌ Failures</h4>
                   <ul>
@@ -321,6 +372,35 @@
         </div>
         <div class="modal-body" v-else>
           <div class="empty-state">Loading details…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Simulate Call Modal -->
+    <div class="modal-backdrop" v-if="showSimulate" @click.self="closeSimulate">
+      <div class="modal simulate-modal">
+        <header class="modal-header">
+          <h2>Simulate Call</h2>
+          <button class="close-btn" @click="closeSimulate">×</button>
+        </header>
+        <div class="modal-body">
+          <p class="simulate-hint">Record a mock call via your microphone. The audio is transcribed by Whisper and stored as a call log — bypassing the sandbox 20-min/day limit.</p>
+          <div class="form-group">
+            <label>Link to Agent (optional)</label>
+            <select v-model="simulateAgent" class="location-select">
+              <option value="">— No agent —</option>
+              <option v-for="agent in summary.agentBreakdown" :key="agent.agentId" :value="agent.agentId">
+                {{ agent.agentName }}
+              </option>
+            </select>
+          </div>
+          <div class="record-area">
+            <button @click="toggleRecording" class="record-btn" :class="{ recording: isRecording }" :disabled="!!simulateStatus">
+              <span v-if="!isRecording">⬤ Record</span>
+              <span v-else>■ Stop ({{ recordingTime }}s)</span>
+            </button>
+            <p class="simulate-status" v-if="simulateStatus">{{ simulateStatus }}</p>
+          </div>
         </div>
       </div>
     </div>

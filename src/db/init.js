@@ -107,6 +107,12 @@ async function initDb() {
     ON call_analyses (location_id, analyzed_at DESC)
   `);
 
+  // Extended metrics column (safe for existing installs)
+  await pool.query(`
+    ALTER TABLE call_analyses
+    ADD COLUMN IF NOT EXISTS metrics JSONB DEFAULT '{}'
+  `);
+
   log.info('Database schema ready.');
 }
 
