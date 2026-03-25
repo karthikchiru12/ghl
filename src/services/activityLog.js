@@ -29,17 +29,4 @@ async function logEvent({
   );
 }
 
-async function getEventsByLocation(locationId, { limit = 50 } = {}) {
-  const result = await pool.query(
-    `SELECT id, location_id, company_id, event_type, status, title, detail, payload, created_at
-     FROM app_events
-     WHERE location_id = $1
-     ORDER BY created_at DESC
-     LIMIT $2`,
-    [locationId, limit]
-  );
-
-  return result.rows;
-}
-
-module.exports = { logEvent, getEventsByLocation };
+module.exports = { logEvent };

@@ -10,10 +10,11 @@ const router = Router({ mergeParams: true });
 // GET /api/locations/:locationId/dashboard?limit=10
 router.get('/', async (req, res) => {
   const { locationId } = req.params;
+  const { agentId } = req.query;
   const recentLimit = Math.min(50, Math.max(5, Number(req.query.limit) || 10));
 
   try {
-    const summary = await getDashboardSummary(locationId, { recentLimit });
+    const summary = await getDashboardSummary(locationId, { recentLimit, agentId: agentId || null });
     return res.json({ ok: true, dashboard: summary });
   } catch (err) {
     log.error(`Dashboard summary failed for ${locationId}:`, err.message);

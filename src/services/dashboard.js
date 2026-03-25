@@ -9,10 +9,10 @@ const log = createLogger('dashboard');
  * Aggregate dashboard summary for a given locationId.
  *
  * @param {string} locationId
- * @param {{ recentLimit?: number }} [opts]
+ * @param {{ recentLimit?: number, agentId?: string | null }} [opts]
  * @returns {Promise<object>}
  */
-async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
+async function getDashboardSummary(locationId, { recentLimit = 10, agentId = null } = {}) {
   log.debug('Building dashboard summary for location:', locationId);
 
   const [callStats, agentStats, topFailures, recentAnalyses, recentCalls, scoreTrend, actionTypes] = await Promise.all([
@@ -27,8 +27,9 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
          MAX(cl.started_at)                          AS last_call_at
        FROM call_logs cl
        LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
-       WHERE cl.location_id = $1`,
-      [locationId]
+       WHERE cl.location_id = $1
+         AND ($2::TEXT IS NULL OR cl.agent_id = $2)`,
+      [locationId, agentId]
     ),
 
     // ─── Per-agent breakdown ───────────────────────────────────────────────
@@ -47,9 +48,10 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
        LEFT JOIN call_logs cl ON cl.agent_id = va.agent_id
        LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
        WHERE va.location_id = $1
+         AND ($2::TEXT IS NULL OR va.agent_id = $2)
        GROUP BY va.agent_id
        ORDER BY total_calls DESC`,
-      [locationId]
+      [locationId, agentId]
     ),
 
     // ─── Top recurring failures across all analyses ────────────────────────
@@ -57,12 +59,14 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
       `SELECT failure_text, COUNT(*) AS frequency
        FROM (
          SELECT jsonb_array_elements_text(failures) AS failure_text
-         FROM call_analyses WHERE location_id = $1
+         FROM call_analyses
+         WHERE location_id = $1
+           AND ($2::TEXT IS NULL OR agent_id = $2)
        ) sub
        GROUP BY failure_text
        ORDER BY frequency DESC
        LIMIT 10`,
-      [locationId]
+      [locationId, agentId]
     ),
 
     // ─── N most recent analyses with agent name ────────────────────────────
@@ -76,9 +80,10 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
        JOIN call_logs cl ON cl.call_id = ca.call_id
        LEFT JOIN voice_agents va ON va.agent_id = ca.agent_id
        WHERE ca.location_id = $1
+         AND ($2::TEXT IS NULL OR ca.agent_id = $2)
        ORDER BY ca.analyzed_at DESC
-       LIMIT $2`,
-      [locationId, recentLimit]
+       LIMIT $3`,
+      [locationId, agentId, recentLimit]
     ),
 
     pool.query(
@@ -96,9 +101,10 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
        LEFT JOIN voice_agents va ON va.agent_id = cl.agent_id
        LEFT JOIN call_analyses ca ON ca.call_id = cl.call_id
        WHERE cl.location_id = $1
+         AND ($2::TEXT IS NULL OR cl.agent_id = $2)
        ORDER BY cl.started_at DESC NULLS LAST
-       LIMIT $2`,
-      [locationId, recentLimit]
+       LIMIT $3`,
+      [locationId, agentId, recentLimit]
     ),
 
     // ─── 7-day daily avg score trend ──────────────────────────────────────
@@ -109,10 +115,11 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
          COUNT(*)                             AS call_count
        FROM call_analyses
        WHERE location_id = $1
+         AND ($2::TEXT IS NULL OR agent_id = $2)
          AND analyzed_at >= NOW() - INTERVAL '7 days'
        GROUP BY DATE_TRUNC('day', analyzed_at)::DATE
        ORDER BY day ASC`,
-      [locationId]
+      [locationId, agentId]
     ),
 
     pool.query(
@@ -124,12 +131,13 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
            jsonb_array_elements(COALESCE(executed_actions, '[]'::jsonb))->>'actionType' AS action_type
          FROM call_logs
          WHERE location_id = $1
+           AND ($2::TEXT IS NULL OR agent_id = $2)
        ) actions
        WHERE action_type IS NOT NULL
        GROUP BY action_type
        ORDER BY frequency DESC
        LIMIT 8`,
-      [locationId]
+      [locationId, agentId]
     ),
   ]);
 
@@ -140,6 +148,7 @@ async function getDashboardSummary(locationId, { recentLimit = 10 } = {}) {
 
   return {
     locationId,
+    agentId,
     overview: {
       totalCalls:         total,
       analysedCalls:      analysed,

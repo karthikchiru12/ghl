@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('crypto');
-const { getInstalledLocations, getLocationRecord } = require('./installations');
 
 function evpBytesToKey(password, salt, keyLength, ivLength) {
   let derived = Buffer.alloc(0);
@@ -51,30 +50,4 @@ function decryptUserData(encryptedData) {
   return JSON.parse(decrypted);
 }
 
-async function buildEmbeddedContext({ encryptedData, locationId: fallbackLocationId }) {
-  let user = null;
-
-  if (encryptedData) {
-    user = decryptUserData(encryptedData);
-  }
-
-  const activeLocationId = user?.activeLocation || fallbackLocationId || null;
-  const companyId = user?.companyId || null;
-  const locations = await getInstalledLocations({ companyId });
-  const scopedLocations = activeLocationId
-    ? locations.filter((location) => location.location_id === activeLocationId)
-    : locations;
-  const activeLocation = activeLocationId
-    ? await getLocationRecord(activeLocationId)
-    : (scopedLocations[0] ?? null);
-
-  return {
-    user,
-    activeLocationId: activeLocation?.location_id ?? activeLocationId,
-    companyId: companyId || activeLocation?.company_id || null,
-    locations: scopedLocations,
-    activeLocation,
-  };
-}
-
-module.exports = { decryptUserData, buildEmbeddedContext };
+module.exports = { decryptUserData };

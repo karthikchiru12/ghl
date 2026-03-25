@@ -147,28 +147,6 @@ async function getInstalledLocations({ companyId, includeUninstalled = false } =
   return result.rows;
 }
 
-async function getLocationRecord(locationId) {
-  const result = await pool.query(
-    `SELECT
-       l.location_id,
-       l.app_id,
-       l.company_id,
-       COALESCE(gi.location_name, l.name) AS name,
-       COALESCE(gi.token_resource_id, l.token_resource_id) AS token_resource_id,
-       COALESCE(gi.install_context, l.install_context, '{}'::jsonb) AS install_context,
-       COALESCE(gi.installed_at, l.installed_at) AS installed_at,
-       GREATEST(COALESCE(gi.updated_at, l.updated_at), COALESCE(l.updated_at, gi.updated_at)) AS updated_at,
-       COALESCE(gi.uninstalled_at, l.uninstalled_at) AS uninstalled_at
-     FROM locations l
-     LEFT JOIN ghl_installations gi ON gi.location_id = l.location_id
-     WHERE l.location_id = $1
-     LIMIT 1`,
-    [locationId]
-  );
-
-  return result.rows[0] ?? null;
-}
-
 async function markUninstalled(payload) {
   try {
     await upsertInstallation(payload, { installed: false });
@@ -181,6 +159,5 @@ module.exports = {
   getAppId,
   upsertInstallation,
   getInstalledLocations,
-  getLocationRecord,
   markUninstalled,
 };

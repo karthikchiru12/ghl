@@ -1,0 +1,154 @@
+.ghl-copilot-card {
+  margin: 16px 0;
+  padding: 18px 20px;
+  background: #ffffff;
+  border: 1px solid #e6ecf5;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.ghl-copilot-card--compact {
+  margin-top: 20px;
+}
+
+.ghl-copilot-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ghl-copilot-kicker {
+  margin: 0 0 4px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ghl-copilot-title {
+  margin: 0;
+  color: #172b4d;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ghl-copilot-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ghl-copilot-stat-grid--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.ghl-copilot-stat {
+  padding: 14px;
+  background: #f8fbff;
+  border: 1px solid #d8e6fb;
+  border-radius: 12px;
+}
+
+.ghl-copilot-stat span {
+  display: block;
+  margin-bottom: 6px;
+  color: #6b778c;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.ghl-copilot-stat strong {
+  color: #172b4d;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.ghl-copilot-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ghl-copilot-panel {
+  padding: 14px;
+  background: #fbfcfe;
+  border: 1px solid #edf2f7;
+  border-radius: 12px;
+}
+
+.ghl-copilot-panel strong {
+  display: block;
+  margin-bottom: 10px;
+  color: #172b4d;
+  font-size: 14px;
+}
+
+.ghl-copilot-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #42526e;
+  font-size: 13px;
+}
+
+.ghl-copilot-list li + li {
+  margin-top: 8px;
+}
+
+.ghl-copilot-list li span {
+  color: #7a869a;
+}
+
+.ghl-copilot-list--dense {
+  padding-left: 18px;
+}
+
+.ghl-copilot-row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ghl-copilot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2552cc;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ghl-copilot-chip.is-good {
+  background: #e9f9ef;
+  color: #117a37;
+}
+
+.ghl-copilot-chip.is-warn {
+  background: #fff6e5;
+  color: #9a6700;
+}
+
+.ghl-copilot-chip.is-bad {
+  background: #fff1f0;
+  color: #c53434;
+}
+
+@media (max-width: 980px) {
+  .ghl-copilot-stat-grid,
+  .ghl-copilot-stat-grid--compact,
+  .ghl-copilot-columns {
+    grid-template-columns: 1fr;
+  }
+}

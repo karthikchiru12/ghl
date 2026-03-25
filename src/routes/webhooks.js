@@ -7,11 +7,27 @@ const { getAppId, markUninstalled, upsertInstallation } = require('../services/i
 
 const log    = createLogger('routes:webhooks');
 const router = Router();
+const sdkWebhookMiddleware = highLevel.webhooks.subscribe();
 
 // ─── GHL SDK signature verification + token persistence middleware ────────────
 // The SDK's subscribe() intercepts INSTALL/UNINSTALL events and persists the
 // OAuth tokens into the sessionStorage we injected (PostgresSessionStorage).
-router.use(highLevel.webhooks.subscribe());
+router.use((req, res, next) => {
+  sdkWebhookMiddleware(req, res, (err) => {
+    if (
+      err &&
+      req.body?.type === 'INSTALL' &&
+      /token is not authorized for this scope/i.test(err.message || '')
+    ) {
+      log.warn(
+        'Ignoring SDK location-token generation failure for INSTALL webhook; OAuth callback already stores the location token.'
+      );
+      return next();
+    }
+
+    return next(err);
+  });
+});
 
 // ─── POST /webhooks/ghl ───────────────────────────────────────────────────────
 router.post('/', async (req, res) => {

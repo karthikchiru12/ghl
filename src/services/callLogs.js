@@ -113,6 +113,18 @@ async function upsertCall(c) {
   );
 }
 
+async function fetchCallDetailFromSdk(callId, locationId) {
+  log.info('Fetching full call detail via SDK:', callId);
+  const opts = await sdkOptions(locationId);
+  const raw = await highLevel.voiceAi.getCallLog({ callId, locationId }, opts);
+
+  if (!raw?.id) return null;
+
+  const call = normaliseCall(raw, locationId);
+  await upsertCall(call);
+  return raw;
+}
+
 /**
  * Fetch call logs from GHL via the SDK voiceAi.getCallLogs(), persist, and return.
  *
@@ -182,7 +194,11 @@ async function getCallsByLocation(locationId, { agentId, page = 1, pageSize = 50
 /**
  * Return a single call with full transcript (DB first, then SDK if missing).
  */
-async function getCallDetail(callId, locationId) {
+async function getCallDetail(callId, locationId, { refresh = false } = {}) {
+  if (refresh) {
+    await fetchCallDetailFromSdk(callId, locationId);
+  }
+
   const cached = await pool.query(
     `SELECT
        cl.*,
@@ -198,13 +214,8 @@ async function getCallDetail(callId, locationId) {
   if (cached.rows.length > 0) return cached.rows[0];
 
   // Not cached — fetch from GHL SDK
-  log.info('Call not in DB, fetching via SDK:', callId);
-  const opts = await sdkOptions(locationId);
-  const raw  = await highLevel.voiceAi.getCallLog({ callId, locationId }, opts);
-
-  if (!raw?.id) return null;
-  const c = normaliseCall(raw, locationId);
-  await upsertCall(c);
+  const raw = await fetchCallDetailFromSdk(callId, locationId);
+  if (!raw) return null;
 
   const fresh = await pool.query(
     `SELECT
@@ -221,4 +232,12 @@ async function getCallDetail(callId, locationId) {
   return fresh.rows[0] ?? null;
 }
 
-module.exports = { syncCallLogs, getCallsByLocation, getCallDetail, normaliseCall, parseTranscriptString, upsertCall };
+module.exports = {
+  syncCallLogs,
+  getCallsByLocation,
+  getCallDetail,
+  fetchCallDetailFromSdk,
+  normaliseCall,
+  parseTranscriptString,
+  upsertCall,
+};

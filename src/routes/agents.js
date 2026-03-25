@@ -11,10 +11,12 @@ const router = Router({ mergeParams: true });
 router.get('/', async (req, res) => {
   const { locationId } = req.params;
   const doSync = req.query.sync === 'true';
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 50));
 
   try {
     const agents = doSync
-      ? await syncAgents(locationId)
+      ? await syncAgents(locationId, { page, pageSize })
       : await getAgentsByLocation(locationId);
 
     return res.json({ ok: true, locationId, agents });
@@ -27,9 +29,10 @@ router.get('/', async (req, res) => {
 
 router.get('/:agentId', async (req, res) => {
   const { locationId, agentId } = req.params;
+  const refresh = req.query.refresh === 'true';
 
   try {
-    const agent = await getAgentDetail(agentId, locationId);
+    const agent = await getAgentDetail(agentId, locationId, { refresh });
     if (!agent) {
       return res.status(404).json({ ok: false, error: 'Agent not found' });
     }

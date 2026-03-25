@@ -8,17 +8,31 @@ const { createLogger } = require('./lib/logger');
 const { resolveRequestContext, requireLocationAccess } = require('./middleware/locationAccess');
 
 // Route modules
-const contextRoutes   = require('./routes/context');
 const oauthRoutes     = require('./routes/oauth');
 const webhookRoutes   = require('./routes/webhooks');
-const locationRoutes  = require('./routes/locations');
 const agentRoutes     = require('./routes/agents');
 const callRoutes      = require('./routes/calls');
 const analyzeRoutes   = require('./routes/analyze');
 const dashboardRoutes = require('./routes/dashboard');
-const activityRoutes  = require('./routes/activity');
 
 const log = createLogger('app');
+
+function isAllowedEmbedOrigin(origin) {
+  if (!origin) return false;
+
+  const allowedOrigins = (process.env.HIGHLEVEL_EMBED_ALLOWED_ORIGINS || 'https://app.gohighlevel.com')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return allowedOrigins.some((allowed) => {
+    if (allowed === origin) return true;
+    if (allowed.startsWith('*.')) {
+      return origin.endsWith(allowed.slice(1));
+    }
+    return false;
+  });
+}
 
 // The GHL SDK WebhookManager internally reads process.env.CLIENT_ID (not our
 // HIGHLEVEL_CLIENT_ID prefix) to derive appId for INSTALL event matching.
@@ -33,6 +47,23 @@ async function createApp() {
 
   const app = express();
 
+  app.use((req, res, next) => {
+    const origin = req.get('origin');
+
+    if (isAllowedEmbedOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-ghl-context');
+    }
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+
+    return next();
+  });
+
   // ─── Body parsing ───────────────────────────────────────────────────────
   // The GHL SDK WebhookManager surprisingly expects req.body to be parsed already,
   // as it re-stringifies it internally for HMAC verification.
@@ -42,8 +73,8 @@ async function createApp() {
 
   app.use('/webhooks/ghl', webhookRoutes);
 
-  // ─── Serve built Vue dashboard from client/dist/ ──────────────────────
-  app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
+  // ─── Serve server-hosted HighLevel embed assets ───────────────────────
+  app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // ─── Health & info ──────────────────────────────────────────────────────
   app.get('/health', async (_req, res) => {
@@ -57,11 +88,9 @@ async function createApp() {
 
   // ─── OAuth ─────────────────────────────────────────────────────────────
   app.use('/', oauthRoutes);                          // /install-url, /oauth/callback
-  app.use('/api/context', contextRoutes);
 
   // ─── API — all location-scoped routes ──────────────────────────────────
   app.use('/api/locations/:locationId', requireLocationAccess);
-  app.use('/api/locations',                                     locationRoutes);
   app.use('/api/locations/:locationId/agents',                  agentRoutes);
   app.use('/api/locations/:locationId/calls',                   callRoutes);
 
@@ -73,16 +102,18 @@ async function createApp() {
   app.use('/api/locations/:locationId',                         analyzeRoutes);  // /analyze-pending
 
   app.use('/api/locations/:locationId/dashboard',               dashboardRoutes);
-  app.use('/api/locations/:locationId/activity',                activityRoutes);
 
   // ─── 404 for unknown API routes ─────────────────────────────────────────
   app.use('/api', (_req, res) => {
     res.status(404).json({ ok: false, error: 'API route not found' });
   });
 
-  // ─── SPA fallback — send index.html for all other GET requests ──────────
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
+  app.get('/', (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'ghl-voice-ai-copilot',
+      embedScript: '/ghl-voice-ai-observability-embed.js',
+    });
   });
 
   // ─── Global error handler ───────────────────────────────────────────────

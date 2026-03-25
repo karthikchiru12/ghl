@@ -29,9 +29,10 @@ router.get('/', async (req, res) => {
 // GET /api/locations/:locationId/calls/:callId
 router.get('/:callId', async (req, res) => {
   const { locationId, callId } = req.params;
+  const refresh = req.query.refresh === 'true';
 
   try {
-    const call = await getCallDetail(callId, locationId);
+    const call = await getCallDetail(callId, locationId, { refresh });
     if (!call) return res.status(404).json({ ok: false, error: 'Call not found' });
     return res.json({ ok: true, call });
   } catch (err) {

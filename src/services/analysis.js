@@ -2,6 +2,7 @@
 
 const { chatComplete, extractJson } = require('../lib/chutes');
 const { getCallDetail } = require('./callLogs');
+const { getAgentDetail } = require('./voiceAgents');
 const { pool } = require('../db/pool');
 const { createLogger } = require('../lib/logger');
 const { logEvent } = require('./activityLog');
@@ -121,17 +122,13 @@ Evaluate this call. Use the configured prompt and actions as the evaluation base
 async function analyseCall(callId, locationId) {
   log.info('Analysing call:', callId);
 
-  const call = await getCallDetail(callId, locationId);
+  const call = await getCallDetail(callId, locationId, { refresh: true });
   if (!call) throw Object.assign(new Error(`Call not found: ${callId}`), { status: 404 });
 
-  // Fetch agent context if available
+  // Fetch full live agent detail so the analysis has current prompt/actions.
   let agent = null;
   if (call.agent_id) {
-    const agResult = await pool.query(
-      `SELECT * FROM voice_agents WHERE agent_id = $1 LIMIT 1`,
-      [call.agent_id]
-    );
-    agent = agResult.rows[0] ?? null;
+    agent = await getAgentDetail(call.agent_id, locationId, { refresh: true });
   }
 
   const messages = buildAnalysisMessages(call, agent);
