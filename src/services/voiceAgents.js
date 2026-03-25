@@ -30,7 +30,7 @@ async function sdkOptions(locationId) {
  * @param {{ page?: number, pageSize?: number }} [pagination]
  * @returns {Promise<Array>}
  */
-async function syncAgents(locationId, { page = 1, pageSize = 100 } = {}) {
+async function syncAgents(locationId, { page = 1, pageSize = 50 } = {}) {
   log.info('Syncing Voice AI agents via SDK for location:', locationId);
 
   const opts = await sdkOptions(locationId);
