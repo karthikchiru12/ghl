@@ -4,11 +4,10 @@ WORKDIR /app
 
 # Install backend dependencies
 COPY package*.json ./
+COPY client/package*.json ./client/
 RUN npm install --omit=dev
 
-# Install client dependencies and build Vue app
-COPY client/package*.json ./client/
-RUN cd client && npm install
+# Build Vue app
 COPY client/ ./client/
 RUN cd client && npm run build
 
