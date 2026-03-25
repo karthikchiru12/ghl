@@ -4,9 +4,6 @@
  * Paste this script into your GHL sub-account:
  *   Settings → Custom Code → Body Tracking Code
  *
- * It injects a floating "Voice AI Copilot" button in the GHL interface.
- * Clicking it opens the observability dashboard in an embedded panel or new tab.
- *
  * The script auto-detects COPILOT_URL from its own src attribute,
  * so no manual editing is needed after deployment.
  */
@@ -14,16 +11,17 @@
   'use strict';
 
   // ─── Configuration ─────────────────────────────────────────────────────
-  // Auto-detect the app URL from the script's own src (works when loaded via <script src="https://your-app/ghl-widget.js">)
   var scripts = document.querySelectorAll('script[src*="ghl-widget"]');
   var scriptSrc = scripts.length ? scripts[scripts.length - 1].src : '';
   var COPILOT_URL = scriptSrc ? scriptSrc.replace(/\/ghl-widget\.js.*$/, '') : (window.__COPILOT_URL || '');
 
-  // Try to extract locationId from the GHL URL (e.g. /v2/location/abc123/...)
   var match = window.location.pathname.match(/\/location\/([a-zA-Z0-9]+)/);
   var locationId = match ? match[1] : '';
-
   var iframeUrl = COPILOT_URL + '/?embed=1' + (locationId ? '&locationId=' + locationId : '');
+
+  // ─── Panel sizing ──────────────────────────────────────────────────────
+  var PANEL_WIDTH = Math.min(900, Math.round(window.innerWidth * 0.55));
+  var isWide = false;
 
   // ─── Floating Button ──────────────────────────────────────────────────
   var btn = document.createElement('button');
@@ -56,30 +54,37 @@
     btn.style.boxShadow = '0 4px 20px rgba(94,106,210,0.4)';
   };
 
-  // ─── Slide-over Panel ─────────────────────────────────────────────────
+  // ─── Panel ────────────────────────────────────────────────────────────
   var panel = document.createElement('div');
   panel.setAttribute('id', 'vai-copilot-panel');
+
+  function setPanelWidth(w) {
+    panel.style.width = w + 'px';
+    panel.style.right = isOpen ? '0' : '-' + w + 'px';
+  }
+
   panel.style.cssText = [
     'position:fixed',
     'top:0',
-    'right:-480px',
-    'width:480px',
+    'right:-' + PANEL_WIDTH + 'px',
+    'width:' + PANEL_WIDTH + 'px',
     'height:100vh',
     'z-index:99998',
     'background:#0d1117',
     'border-left:1px solid rgba(255,255,255,0.1)',
     'box-shadow:-4px 0 30px rgba(0,0,0,0.5)',
-    'transition:right 0.3s ease',
+    'transition:right 0.3s ease,width 0.3s ease',
     'display:flex',
     'flex-direction:column',
   ].join(';');
 
+  // ─── Panel Header ─────────────────────────────────────────────────────
   var panelHeader = document.createElement('div');
   panelHeader.style.cssText = [
     'display:flex',
     'justify-content:space-between',
     'align-items:center',
-    'padding:12px 16px',
+    'padding:10px 16px',
     'border-bottom:1px solid rgba(255,255,255,0.1)',
     'background:rgba(13,17,23,0.95)',
     'flex-shrink:0',
@@ -90,27 +95,46 @@
   title.style.cssText = 'color:#fff;font-weight:600;font-size:14px;font-family:Inter,system-ui,sans-serif;';
 
   var actions = document.createElement('div');
-  actions.style.cssText = 'display:flex;gap:8px;';
+  actions.style.cssText = 'display:flex;gap:6px;align-items:center;';
 
+  var btnStyle = 'background:transparent;border:1px solid rgba(255,255,255,0.15);color:#c9d1d9;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:13px;font-family:inherit;';
+
+  // Expand / collapse toggle
+  var wideBtn = document.createElement('button');
+  wideBtn.textContent = '⬌';
+  wideBtn.title = 'Toggle full width';
+  wideBtn.style.cssText = btnStyle;
+  wideBtn.onclick = function () {
+    isWide = !isWide;
+    var w = isWide ? Math.round(window.innerWidth * 0.85) : PANEL_WIDTH;
+    setPanelWidth(w);
+    wideBtn.textContent = isWide ? '⬌' : '⬌';
+    wideBtn.title = isWide ? 'Collapse panel' : 'Expand to full width';
+  };
+
+  // Open in new tab
   var expandBtn = document.createElement('button');
-  expandBtn.textContent = '↗';
+  expandBtn.textContent = '↗ New Tab';
   expandBtn.title = 'Open in new tab';
-  expandBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:14px;';
+  expandBtn.style.cssText = btnStyle;
   expandBtn.onclick = function () { window.open(iframeUrl, '_blank'); };
 
+  // Close
   var closeBtn = document.createElement('button');
   closeBtn.textContent = '×';
-  closeBtn.style.cssText = 'background:transparent;border:none;color:#8b949e;font-size:20px;cursor:pointer;padding:0 4px;';
+  closeBtn.style.cssText = 'background:transparent;border:none;color:#8b949e;font-size:22px;cursor:pointer;padding:0 4px;line-height:1;';
   closeBtn.onclick = function () { togglePanel(false); };
 
+  actions.appendChild(wideBtn);
   actions.appendChild(expandBtn);
   actions.appendChild(closeBtn);
   panelHeader.appendChild(title);
   panelHeader.appendChild(actions);
 
+  // ─── Iframe ───────────────────────────────────────────────────────────
   var iframe = document.createElement('iframe');
   iframe.src = iframeUrl;
-  iframe.style.cssText = 'flex:1;border:none;width:100%;';
+  iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
   iframe.setAttribute('allow', 'microphone');
 
   panel.appendChild(panelHeader);
@@ -125,6 +149,7 @@
     'z-index:99997',
     'background:rgba(0,0,0,0.3)',
     'display:none',
+    'transition:opacity 0.3s',
   ].join(';');
   backdrop.onclick = function () { togglePanel(false); };
 
@@ -132,11 +157,18 @@
   var isOpen = false;
   function togglePanel(open) {
     isOpen = typeof open === 'boolean' ? open : !isOpen;
-    panel.style.right = isOpen ? '0' : '-480px';
+    var w = isWide ? Math.round(window.innerWidth * 0.85) : PANEL_WIDTH;
+    panel.style.right = isOpen ? '0' : '-' + w + 'px';
     backdrop.style.display = isOpen ? 'block' : 'none';
+    btn.style.display = isOpen ? 'none' : 'block';
   }
 
-  btn.onclick = function () { togglePanel(); };
+  // Close on Escape
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && isOpen) togglePanel(false);
+  });
+
+  btn.onclick = function () { togglePanel(true); };
 
   // ─── Mount ────────────────────────────────────────────────────────────
   document.body.appendChild(backdrop);
