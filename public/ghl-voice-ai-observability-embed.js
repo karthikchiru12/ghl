@@ -146,7 +146,7 @@
       await fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls`, {
         sync: 'true',
         allPages: 'true',
-        limit: 100,
+        limit: 50,
         agentId: scope.agentId || '',
       }));
 
