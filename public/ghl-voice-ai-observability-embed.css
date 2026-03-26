@@ -291,6 +291,16 @@
   line-height: 1.4;
 }
 
+.cp-failure-list li::before {
+  content: '•';
+  color: #dc2626;
+  font-weight: 900;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.cp-failure-list--action li::before { color: #ca8a04; }
+
 .cp-failure-text {
   color: #374151;
   flex: 1;
@@ -977,4 +987,63 @@
 @media (max-width: 640px) {
   .cp-drawer { width: 100%; }
   .cp-drawer-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ── Transcript chat bubbles ─────────────────────────────────── */
+.cp-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cp-chat-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cp-chat-bubble--agent {
+  align-self: flex-start;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-bottom-left-radius: 3px;
+}
+
+.cp-chat-bubble--user {
+  align-self: flex-end;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-bottom-right-radius: 3px;
+}
+
+.cp-chat-speaker {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 3px;
+}
+
+.cp-chat-bubble--agent .cp-chat-speaker { color: #1d4ed8; }
+.cp-chat-bubble--user  .cp-chat-speaker { color: #15803d; }
+
+.cp-chat-text {
+  margin: 0;
+  color: #374151;
+}
+
+.cp-transcript-raw {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #4b5563;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f9fafb;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 10px 12px;
 }

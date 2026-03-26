@@ -22,7 +22,6 @@
 
   const STYLE_ID   = 'ghl-copilot-style';
   const SUMMARY_ID = 'ghl-copilot-summary';
-  const LOGS_ID    = 'ghl-copilot-logs';
   const DRAWER_ID  = 'ghl-copilot-drawer';
 
   ensureStylesheet();
@@ -374,6 +373,28 @@
           </div>
         </div>
       ` : ''}
+
+      ${arr(call?.transcript).length ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">Transcript</p>
+          <div class="cp-chat">
+            ${arr(call.transcript).map((turn) => {
+              const isAgent = turn.role === 'agent' || turn.role === 'bot' || turn.role === 'assistant' || turn.role === 'ai';
+              return `
+                <div class="cp-chat-bubble cp-chat-bubble--${isAgent ? 'agent' : 'user'}">
+                  <span class="cp-chat-speaker">${isAgent ? 'Agent' : 'Caller'}</span>
+                  <p class="cp-chat-text">${esc(turn.content || turn.message || '')}</p>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : call?.transcript_text ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">Transcript</p>
+          <pre class="cp-transcript-raw">${esc(call.transcript_text)}</pre>
+        </div>
+      ` : ''}
     `;
   }
 
@@ -385,7 +406,6 @@
     } else {
       renderOverviewView(payload);
     }
-    renderLogsCard(payload);
     decorateRows(payload);
   }
 
@@ -395,7 +415,8 @@
     const anchor = findSummaryAnchor();
     if (!anchor) return;
 
-    const { overview, agentBreakdown, topFailures, scoreTrend, recommendations, missedOpportunities, metrics } = payload.dashboard;
+    const { overview, agentBreakdown, topFailures, scoreTrend, recommendations, missedOpportunities, metrics, recentAnalyses } = payload.dashboard;
+    const actionItems = [...new Set(arr(recentAnalyses).flatMap((a) => arr(a.use_actions)))].slice(0, 3);
 
     let root = document.getElementById(SUMMARY_ID);
     if (!root) {
@@ -445,6 +466,10 @@
               <div class="cp-panel-title cp-panel-title--mt">Missed Opportunities</div>
               ${renderFailureList(missedOpportunities.slice(0, 3))}
             ` : ''}
+            ${actionItems.length ? `
+              <div class="cp-panel-title cp-panel-title--mt">⚡ Action Items</div>
+              ${renderActionList(actionItems)}
+            ` : ''}
           </div>
           <div class="cp-panel">
             <div class="cp-panel-title">Score Trend — 7 days</div>
@@ -469,8 +494,9 @@
     const anchor = findSummaryAnchor();
     if (!anchor) return;
 
-    const { overview, agentBreakdown, topFailures, scoreTrend, recommendations, missedOpportunities, transcriptHighlights, metrics, recentCalls } = payload.dashboard;
-    const agentInfo  = agentBreakdown?.[0] || null;
+    const { overview, agentBreakdown, topFailures, scoreTrend, recommendations, missedOpportunities, transcriptHighlights, metrics, recentCalls, recentAnalyses } = payload.dashboard;
+    const agentInfo   = agentBreakdown?.[0] || null;
+    const actionItems = [...new Set(arr(recentAnalyses).flatMap((a) => arr(a.use_actions)))].slice(0, 3);
     const agentName  = agentInfo?.agentName || 'This Agent';
     const agentStatus = agentInfo?.status || null;
 
@@ -530,6 +556,10 @@
               <div class="cp-panel-title cp-panel-title--mt">Missed Opportunities</div>
               ${renderFailureList(missedOpportunities.slice(0, 3))}
             ` : ''}
+            ${actionItems.length ? `
+              <div class="cp-panel-title cp-panel-title--mt">⚡ Action Items</div>
+              ${renderActionList(actionItems)}
+            ` : ''}
           </div>
           <div class="cp-panel">
             <div class="cp-panel-title">Score Trend — 7 days</div>
@@ -558,55 +588,6 @@
           <p class="cp-empty-sub">Click <strong>Sync &amp; Analyze</strong> to pull this agent's calls and run AI analysis.</p>
         </div>
       `}
-    `;
-  }
-
-  // ─── Logs card (below native stat section, above call table) ─────────────
-
-  function renderLogsCard(payload) {
-    const anchor = findLogsAnchor();
-    if (!anchor) return;
-
-    const { overview, recentAnalyses } = payload.dashboard;
-    const scope    = payload.scope;
-    const isAgent  = Boolean(scope.agentId);
-    const analyses = recentAnalyses || [];
-
-    const flagged      = analyses.filter((a) => (a.score ?? 0) < 70 || arr(a.failures).length > 0).length;
-    const actionNeeded = analyses.filter((a) => arr(a.use_actions).length > 0).length;
-    const successRate  = overview?.successRate;
-
-    let root = document.getElementById(LOGS_ID);
-    if (!root) {
-      root = document.createElement('section');
-      root.id = LOGS_ID;
-      root.className = 'cp-card cp-card--logs';
-      anchor.parentNode.insertBefore(root, anchor);
-    }
-
-    root.innerHTML = `
-      <div class="cp-card-header cp-card-header--compact">
-        <div>
-          <p class="cp-kicker">Log Review</p>
-          <h3 class="cp-title">${isAgent ? 'Agent call analysis' : 'Copilot findings for the visible log stream'}</h3>
-        </div>
-      </div>
-      <div class="cp-stats-grid cp-stats-grid--3">
-        ${stat('Flagged Calls', fmt(flagged),      null)}
-        ${stat('Use Actions',   fmt(actionNeeded), null)}
-        ${stat('Success Rate',  successRate != null ? `${successRate}%` : '—', null)}
-      </div>
-      ${analyses.length ? `
-        <ul class="cp-finding-list">
-          ${analyses.slice(0, 5).map((a) => {
-            const topIssue = arr(a.failures)[0] || arr(a.use_actions)[0];
-            const agentLabel = !isAgent && a.agent_name ? `<span class="cp-finding-agent">${esc(a.agent_name)}</span>` : '';
-            return topIssue
-              ? `<li>${agentLabel}<span>${esc(topIssue)}</span></li>`
-              : '';
-          }).filter(Boolean).join('')}
-        </ul>
-      ` : `<p class="cp-finding-empty">No analyzed calls yet — run Sync &amp; Analyze.</p>`}
     `;
   }
 
@@ -752,6 +733,15 @@
     `;
   }
 
+  function renderActionList(items) {
+    if (!items?.length) return '';
+    return `
+      <ul class="cp-failure-list cp-failure-list--action">
+        ${items.map((item) => `<li><span class="cp-failure-text">${esc(item)}</span></li>`).join('')}
+      </ul>
+    `;
+  }
+
   function renderRecommendationsBlock(recs) {
     if (!recs) return '';
     const { prompt = [], script = [], action = [] } = recs;
@@ -867,7 +857,7 @@
   }
 
   function cleanup() {
-    [SUMMARY_ID, LOGS_ID].forEach((id) => document.getElementById(id)?.remove());
+    [SUMMARY_ID, DRAWER_ID, 'cp-drawer-overlay'].forEach((id) => document.getElementById(id)?.remove());
   }
 
   function ensureStylesheet() {
