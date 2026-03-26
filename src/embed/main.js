@@ -20,11 +20,14 @@ import App from './App.vue';
     const path = window.location.pathname;
     if (!path.includes('/ai-agents/voice-ai')) return false;
 
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'edit') return false; // agent edit page — never show
+
     const isAgentPage = /\/ai-agents\/voice-ai\/[^/?]+/.test(path);
     if (!isAgentPage) return true; // root voice AI page — always show
 
     // Agent page — only on Dashboard & Logs tab
-    const tab = new URLSearchParams(window.location.search).get('tab');
+    const tab = params.get('tab');
     return !tab || tab === 'call_logs' || tab === 'dashboard_logs';
   }
 
@@ -122,6 +125,12 @@ import App from './App.vue';
 
   // Back/forward button
   window.addEventListener('popstate', onNavigate);
+
+  // Hash-based tab changes (GHL may change ?tab= without pushState)
+  window.addEventListener('hashchange', onNavigate);
+
+  // Lightweight URL poll — only unmounts, no DOM scanning
+  setInterval(() => { if (vueApp && !isVoiceAiRoute()) unmountApp(); }, 1000);
 
   // ── Initial run ───────────────────────────────────────────────────────────
   if (document.readyState === 'loading') {
