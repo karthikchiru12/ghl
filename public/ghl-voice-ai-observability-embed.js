@@ -23,6 +23,7 @@
   const STYLE_ID   = 'ghl-copilot-style';
   const SUMMARY_ID = 'ghl-copilot-summary';
   const LOGS_ID    = 'ghl-copilot-logs';
+  const DRAWER_ID  = 'ghl-copilot-drawer';
 
   ensureStylesheet();
   tick();
@@ -141,6 +142,241 @@
     }
   }
 
+  // ─── Call drill-down drawer ──────────────────────────────────────────────
+
+  async function openCallModal(callId, scope) {
+    showDrawer(renderDrawerLoading());
+
+    try {
+      const [callRes, analysisRes] = await Promise.allSettled([
+        fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls/${callId}`)),
+        fetchJson(buildApiUrl(`/api/locations/${scope.locationId}/calls/${callId}/analysis`)),
+      ]);
+
+      const call     = callRes.status     === 'fulfilled' ? callRes.value.call         : null;
+      const analysis = analysisRes.status === 'fulfilled' ? analysisRes.value.analysis : null;
+
+      if (analysis) {
+        showDrawer(renderDrawerContent(call, analysis));
+      } else {
+        showDrawer(renderDrawerUnanalyzed(call, callId, scope));
+      }
+    } catch (err) {
+      showDrawer(`<div class="cp-drawer-error">Failed to load call: ${esc(err.message)}</div>`);
+    }
+  }
+
+  function showDrawer(html) {
+    let overlay = document.getElementById('cp-drawer-overlay');
+    let drawer  = document.getElementById(DRAWER_ID);
+
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id        = 'cp-drawer-overlay';
+      overlay.className = 'cp-drawer-overlay';
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDrawer(); });
+      document.body.appendChild(overlay);
+    }
+
+    if (!drawer) {
+      drawer = document.createElement('div');
+      drawer.id        = DRAWER_ID;
+      drawer.className = 'cp-drawer';
+      drawer.addEventListener('click', (e) => {
+        if (e.target.closest('[data-drawer-close]')) { closeDrawer(); return; }
+        const analyzeBtn = e.target.closest('[data-analyze-btn]');
+        if (analyzeBtn && !analyzeBtn.disabled) {
+          analyzeBtn.disabled    = true;
+          analyzeBtn.textContent = '⚡ Analyzing…';
+          triggerAnalyzeNow(analyzeBtn.dataset.callId, analyzeBtn.dataset.locationId);
+        }
+      });
+      document.body.appendChild(drawer);
+    }
+
+    drawer.innerHTML = `
+      <div class="cp-drawer-inner">
+        <button class="cp-drawer-close" data-drawer-close aria-label="Close">✕</button>
+        ${html}
+      </div>
+    `;
+
+    requestAnimationFrame(() => {
+      overlay.classList.add('cp-drawer-overlay--open');
+      drawer.classList.add('cp-drawer--open');
+    });
+  }
+
+  function closeDrawer() {
+    const overlay = document.getElementById('cp-drawer-overlay');
+    const drawer  = document.getElementById(DRAWER_ID);
+    if (overlay) overlay.classList.remove('cp-drawer-overlay--open');
+    if (drawer)  drawer.classList.remove('cp-drawer--open');
+    setTimeout(() => { overlay?.remove(); drawer?.remove(); }, 320);
+  }
+
+  async function triggerAnalyzeNow(callId, locationId) {
+    try {
+      const res  = await fetchJson(
+        buildApiUrl(`/api/locations/${locationId}/calls/${callId}/analyze`),
+        { method: 'POST' }
+      );
+      const call = state.payload?.calls?.find((c) => c.call_id === callId) || null;
+      showDrawer(renderDrawerContent(call, res.analysis));
+      state.lastFetchedAt = 0; // trigger background refresh
+    } catch (err) {
+      showDrawer(`<div class="cp-drawer-error">Analysis failed: ${esc(err.message)}</div>`);
+    }
+  }
+
+  function renderDrawerLoading() {
+    return `
+      <div class="cp-drawer-loading">
+        <div class="cp-drawer-spinner"></div>
+        <span>Loading call analysis…</span>
+      </div>
+    `;
+  }
+
+  function renderDrawerUnanalyzed(call, callId, scope) {
+    return `
+      <div class="cp-drawer-header">
+        <p class="cp-drawer-kicker">Observability Copilot</p>
+        <h3 class="cp-drawer-title">${call ? `Call — ${esc(fmtDate(call.started_at))}` : 'Call Detail'}</h3>
+        <div class="cp-drawer-meta">
+          ${call?.duration_seconds ? `<span class="cp-drawer-meta-item">⏱ ${fmtDuration(call.duration_seconds)}</span>` : ''}
+          ${call?.agent_name       ? `<span class="cp-drawer-meta-item">🤖 ${esc(call.agent_name)}</span>`             : ''}
+        </div>
+      </div>
+      <div class="cp-drawer-unanalyzed">
+        <p><strong>This call hasn't been analyzed yet.</strong></p>
+        <p>Run AI analysis now using Minimax M2.5.</p>
+        <button class="cp-analyze-btn" data-analyze-btn
+          data-call-id="${esc(callId)}" data-location-id="${esc(scope.locationId)}">
+          ⚡ Analyze Now
+        </button>
+      </div>
+    `;
+  }
+
+  function renderDrawerContent(call, analysis) {
+    const score      = analysis.score ?? call?.score ?? null;
+    const title      = call
+      ? `Call — ${fmtDate(call.started_at || analysis.analyzed_at)}`
+      : 'Call Analysis';
+    const failures   = arr(analysis.failures);
+    const actions    = arr(analysis.use_actions);
+    const promptRecs = arr(analysis.prompt_recommendations);
+    const scriptRecs = arr(analysis.script_recommendations);
+    const actionRecs = arr(analysis.action_recommendations);
+    const highlights = arr(analysis.transcript_highlights);
+    const metrics    = analysis.metrics || {};
+    const hasRecs    = promptRecs.length || scriptRecs.length || actionRecs.length;
+
+    return `
+      <div class="cp-drawer-header">
+        <p class="cp-drawer-kicker">Observability Copilot</p>
+        <h3 class="cp-drawer-title">
+          ${esc(title)}
+          ${score != null ? `<span class="cp-score-pill ${scoreChipClass(score)}">${score}</span>` : ''}
+        </h3>
+        <div class="cp-drawer-meta">
+          ${call?.duration_seconds    ? `<span class="cp-drawer-meta-item">⏱ ${fmtDuration(call.duration_seconds)}</span>` : ''}
+          ${call?.agent_name          ? `<span class="cp-drawer-meta-item">🤖 ${esc(call.agent_name)}</span>`              : ''}
+          ${analysis.analyzed_at      ? `<span class="cp-drawer-meta-item">analyzed ${fmtDate(analysis.analyzed_at)}</span>` : ''}
+        </div>
+      </div>
+
+      ${score != null ? `
+        <div class="cp-drawer-score-band">
+          <div class="cp-score-band__label">
+            <span>Overall Score</span>
+            <strong style="color:${scoreColor(score)}">${score} / 100</strong>
+          </div>
+          <div class="cp-score-bar">
+            <div class="cp-score-bar__fill" style="width:${score}%;background:${scoreColor(score)}"></div>
+          </div>
+        </div>
+      ` : ''}
+
+      ${Object.keys(metrics).length ? `
+        <div class="cp-drawer-metrics">
+          ${metrics.empathy_score    != null ? `<div class="cp-drawer-metric"><span class="cp-drawer-metric__label">Empathy</span><span class="cp-drawer-metric__value">${Number(metrics.empathy_score).toFixed(1)}</span></div>` : ''}
+          ${metrics.script_adherence != null ? `<div class="cp-drawer-metric"><span class="cp-drawer-metric__label">Script</span><span class="cp-drawer-metric__value">${Number(metrics.script_adherence).toFixed(1)}</span></div>` : ''}
+          ${metrics.customer_effort  != null ? `<div class="cp-drawer-metric"><span class="cp-drawer-metric__label">Effort</span><span class="cp-drawer-metric__value">${Number(metrics.customer_effort).toFixed(1)}/5</span></div>` : ''}
+          ${metrics.sentiment_overall != null ? `<div class="cp-drawer-metric"><span class="cp-drawer-metric__label">Sentiment</span><span class="cp-drawer-metric__value">${fmtSentiment(metrics.sentiment_overall)}</span></div>` : ''}
+        </div>
+      ` : ''}
+
+      ${analysis.summary ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">Summary</p>
+          <p class="cp-drawer-summary">${esc(analysis.summary)}</p>
+        </div>
+      ` : ''}
+
+      ${failures.length ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">Failures &amp; Issues</p>
+          <ul class="cp-drawer-issues">
+            ${failures.map((f) => `<li>${esc(f)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+
+      ${actions.length ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">Actions Needed</p>
+          <ul class="cp-drawer-issues cp-drawer-issues--action">
+            ${actions.map((a) => `<li>${esc(a)}</li>`).join('')}
+          </ul>
+        </div>
+      ` : ''}
+
+      ${hasRecs ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">AI Recommendations</p>
+          ${promptRecs.length ? `
+            <div class="cp-drawer-rec-group">
+              <p class="cp-drawer-rec-label">✏️ Prompt</p>
+              <ul class="cp-drawer-rec-list">${promptRecs.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+            </div>
+          ` : ''}
+          ${scriptRecs.length ? `
+            <div class="cp-drawer-rec-group">
+              <p class="cp-drawer-rec-label">📋 Script</p>
+              <ul class="cp-drawer-rec-list">${scriptRecs.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+            </div>
+          ` : ''}
+          ${actionRecs.length ? `
+            <div class="cp-drawer-rec-group">
+              <p class="cp-drawer-rec-label">⚡ Actions</p>
+              <ul class="cp-drawer-rec-list">${actionRecs.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      ${highlights.length ? `
+        <div class="cp-drawer-section">
+          <p class="cp-drawer-section-title">Transcript Highlights</p>
+          <div class="cp-drawer-highlights">
+            ${highlights.slice(0, 6).map((h) => {
+              const isAgent = h.speaker === 'agent';
+              return `
+                <div class="cp-drawer-highlight cp-drawer-highlight--${isAgent ? 'agent' : 'user'}">
+                  <div class="cp-drawer-highlight__speaker">${isAgent ? 'Agent' : 'Caller'}</div>
+                  <p class="cp-drawer-highlight__text">"${esc(truncate(h.moment || '', 150))}"</p>
+                  ${h.reason ? `<p class="cp-drawer-highlight__reason">${esc(h.reason)}</p>` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : ''}
+    `;
+  }
+
   // ─── Render dispatcher ───────────────────────────────────────────────────
 
   function render(payload) {
@@ -160,13 +396,18 @@
     if (!anchor) return;
 
     const { overview, agentBreakdown, topFailures, scoreTrend, recommendations, missedOpportunities, metrics } = payload.dashboard;
-    const scope = payload.scope;
 
     let root = document.getElementById(SUMMARY_ID);
     if (!root) {
       root = document.createElement('section');
       root.id = SUMMARY_ID;
       root.className = 'cp-card';
+      // Single delegated listener on the persistent root element — survives innerHTML resets
+      root.addEventListener('click', (e) => {
+        if (e.target.closest('[data-sync-btn]') && !state.isSyncing) runSync(getRouteScope());
+        const callRow = e.target.closest('tr[data-call-id]');
+        if (callRow) openCallModal(callRow.dataset.callId, getRouteScope());
+      });
       anchor.parentNode.insertBefore(root, anchor);
     }
 
@@ -220,8 +461,6 @@
         </div>
       `}
     `;
-
-    root.querySelector('[data-sync-btn]')?.addEventListener('click', () => runSync(scope));
   }
 
   // ─── Agent deep-dive view (/voice-ai/:agentId) ───────────────────────────
@@ -231,7 +470,6 @@
     if (!anchor) return;
 
     const { overview, agentBreakdown, topFailures, scoreTrend, recommendations, missedOpportunities, transcriptHighlights, metrics, recentCalls } = payload.dashboard;
-    const scope      = payload.scope;
     const agentInfo  = agentBreakdown?.[0] || null;
     const agentName  = agentInfo?.agentName || 'This Agent';
     const agentStatus = agentInfo?.status || null;
@@ -241,6 +479,12 @@
       root = document.createElement('section');
       root.id = SUMMARY_ID;
       root.className = 'cp-card';
+      // Single delegated listener on the persistent root element — survives innerHTML resets
+      root.addEventListener('click', (e) => {
+        if (e.target.closest('[data-sync-btn]') && !state.isSyncing) runSync(getRouteScope());
+        const callRow = e.target.closest('tr[data-call-id]');
+        if (callRow) openCallModal(callRow.dataset.callId, getRouteScope());
+      });
       anchor.parentNode.insertBefore(root, anchor);
     }
 
@@ -315,8 +559,6 @@
         </div>
       `}
     `;
-
-    root.querySelector('[data-sync-btn]')?.addEventListener('click', () => runSync(scope));
   }
 
   // ─── Logs card (below native stat section, above call table) ─────────────
@@ -474,12 +716,13 @@
   function renderCallsTable(calls, showAgent) {
     if (!calls?.length) return '<p class="cp-table-empty">No calls recorded yet.</p>';
     const rows = calls.map((c) => `
-      <tr>
+      <tr class="cp-call-row" data-call-id="${esc(c.call_id)}">
         ${showAgent ? `<td>${esc(c.agent_name || c.agent_id || '—')}</td>` : ''}
         <td>${c.started_at ? fmtDate(c.started_at) : '<span class="cp-muted">—</span>'}</td>
         <td>${c.duration_seconds ? fmtDuration(c.duration_seconds) : '<span class="cp-muted">—</span>'}</td>
         <td>${c.score != null ? `<span class="cp-score-pill ${scoreChipClass(c.score)}">${c.score}</span>` : '<span class="cp-muted">—</span>'}</td>
         <td class="cp-summary-cell">${c.summary ? esc(truncate(c.summary, 80)) : '<span class="cp-muted">No summary</span>'}</td>
+        <td class="cp-open-cell"><span class="cp-open-icon">›</span></td>
       </tr>
     `).join('');
     return `
@@ -579,7 +822,7 @@
     }).join('') : '';
 
     return `
-      <svg viewBox="0 0 ${w} ${h}" class="cp-sparkline" preserveAspectRatio="none" role="img" aria-label="Score trend chart">
+      <svg viewBox="0 0 ${w} ${h}" class="cp-sparkline" role="img" aria-label="Score trend chart">
         <polygon points="${areaPts}" fill="#2563eb" fill-opacity="0.08" />
         <polyline points="${linePts}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
         ${dots}

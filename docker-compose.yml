@@ -25,6 +25,9 @@ services:
       LOG_WEBHOOK_BODIES: ${LOG_WEBHOOK_BODIES:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ALLOW_UNSCOPED_DEV: ${ALLOW_UNSCOPED_DEV:-false}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SCHEDULER_INTERVAL_MINUTES: ${SCHEDULER_INTERVAL_MINUTES:-15}
+      SCHEDULER_ANALYZE_LIMIT: ${SCHEDULER_ANALYZE_LIMIT:-10}
     depends_on:
       db:
         condition: service_healthy

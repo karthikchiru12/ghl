@@ -15,6 +15,7 @@ const callRoutes      = require('./routes/calls');
 const analyzeRoutes   = require('./routes/analyze');
 const dashboardRoutes = require('./routes/dashboard');
 
+const scheduler = require('./services/scheduler');
 const log = createLogger('app');
 
 function isAllowedEmbedOrigin(origin) {
@@ -80,7 +81,13 @@ async function createApp() {
   app.get('/health', async (_req, res) => {
     try {
       await pool.query('SELECT 1');
-      res.json({ ok: true, service: 'ghl-voice-ai-copilot', time: new Date().toISOString(), db: 'ok' });
+      res.json({
+        ok: true,
+        service:   'ghl-voice-ai-copilot',
+        time:      new Date().toISOString(),
+        db:        'ok',
+        scheduler: scheduler.status(),
+      });
     } catch (err) {
       res.status(503).json({ ok: false, service: 'ghl-voice-ai-copilot', time: new Date().toISOString(), db: 'error' });
     }
