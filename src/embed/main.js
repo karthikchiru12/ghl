@@ -3,63 +3,87 @@ import { createApp } from 'vue';
 import App from './App.vue';
 
 (function () {
-  // IIFE guard — only mount once per page
   if (window.__GHL_VOICE_AI_COPILOT_EMBED_LOADED__) return;
   window.__GHL_VOICE_AI_COPILOT_EMBED_LOADED__ = true;
 
-  // ── Derive apiBase from this script's own src ─────────────────────────
-  // Works even when loaded inside GHL's iframe — no hardcoding needed.
-  function getApiBase() {
-    const scripts = document.querySelectorAll('script[src]');
-    for (const s of scripts) {
-      if (s.src && s.src.includes('ghl-voice-ai-observability-embed')) {
-        try { return new URL(s.src).origin; } catch (_) {}
-      }
-    }
-    // Fallback: if served from the same origin (unlikely in GHL iframe)
-    return window.location.origin;
-  }
-
-  // ── Config: read from window.GHLVoiceAICopilotConfig (set in custom JS) ──
+  // ── Config ────────────────────────────────────────────────────────────────
   const injected = window.GHLVoiceAICopilotConfig || window.__GHL_COPILOT_CONFIG__ || {};
+  const script   = document.currentScript;
   const appConfig = {
-    appId:     injected.appId     || '',
-    apiBase:   injected.apiBase   || getApiBase(),
+    appId:     injected.appId     || (script ? script.dataset.appId || '' : ''),
+    apiBase:   injected.apiBase   || (script ? new URL(script.src).origin : window.location.origin),
     refreshMs: injected.refreshMs || 30_000,
   };
 
-  // ── Find the GHL embed anchor ─────────────────────────────────────────────
-  function findAnchor() {
-    return (
-      document.getElementById('ghl-voice-ai-copilot-root') ||
-      document.querySelector('[data-ghl-voice-ai-copilot]')
-    );
+  // ── Route helpers ─────────────────────────────────────────────────────────
+  function isVoiceAiRoute() {
+    return window.location.pathname.includes('/ai-agents/voice-ai');
   }
 
-  // ── Mount ─────────────────────────────────────────────────────────────────
-  function mount() {
-    let anchor = findAnchor();
-    if (!anchor) {
-      // Create a mount point and append to the main content area or body
-      anchor = document.createElement('div');
-      anchor.id = 'ghl-voice-ai-copilot-root';
-      const target =
-        document.querySelector('.hl-main-content') ||
-        document.querySelector('main') ||
-        document.body;
-      target.appendChild(anchor);
+  // ── Anchor: insert before "Calls Completed" just like the old embed ───────
+  function findSummaryAnchor() {
+    for (const el of document.querySelectorAll('*')) {
+      if (!el.childElementCount && el.textContent.trim() === 'Calls Completed') {
+        return closestBlock(el);
+      }
     }
-
-    const mountEl = document.createElement('div');
-    anchor.appendChild(mountEl);
-
-    createApp(App, { config: appConfig }).mount(mountEl);
+    // Fallback: Agent Name table header
+    for (const th of document.querySelectorAll('th')) {
+      if (th.textContent.trim() === 'Agent Name') {
+        const table = th.closest('table');
+        return table ? (table.parentElement || table) : null;
+      }
+    }
+    return null;
   }
 
-  // Wait for DOM to be ready
+  function closestBlock(el) {
+    let cur = el;
+    while (cur && cur !== document.body) {
+      const r = cur.getBoundingClientRect();
+      if (r.width > 600 && r.height > 60) return cur;
+      cur = cur.parentElement;
+    }
+    return el.parentElement;
+  }
+
+  // ── Mount / unmount ───────────────────────────────────────────────────────
+  let vueApp   = null;
+  let mountEl  = null;
+
+  function mountApp() {
+    const anchor = findSummaryAnchor();
+    if (!anchor) return; // GHL DOM not ready yet — tick will retry
+
+    if (mountEl && document.body.contains(mountEl)) return; // already mounted
+
+    mountEl = document.createElement('div');
+    anchor.parentNode.insertBefore(mountEl, anchor);
+
+    vueApp = createApp(App, { config: appConfig });
+    vueApp.mount(mountEl);
+  }
+
+  function unmountApp() {
+    if (vueApp) { vueApp.unmount(); vueApp = null; }
+    if (mountEl) { mountEl.remove(); mountEl = null; }
+  }
+
+  // ── Tick — mirrors the old embed's setInterval(tick, scanMs) ─────────────
+  function tick() {
+    if (isVoiceAiRoute()) {
+      if (!vueApp) mountApp();
+    } else {
+      if (vueApp) unmountApp();
+    }
+  }
+
+  // Run immediately, then poll like the old embed did
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount);
+    document.addEventListener('DOMContentLoaded', tick);
   } else {
-    mount();
+    tick();
   }
+
+  setInterval(tick, 1500);
 })();
