@@ -2,7 +2,6 @@
 import { inject, computed } from 'vue';
 import CardHeader    from '../components/CardHeader.vue';
 import Sparkline     from '../components/Sparkline.vue';
-import CallsTable    from '../components/CallsTable.vue';
 import AgentGoals    from '../components/AgentGoals.vue';
 import { fmt, fmtScore, fmtSentiment, scoreColor, scoreLabel, scoreChipClass, arr } from '../utils/index.js';
 
@@ -10,9 +9,6 @@ const data       = inject('data');
 const syncing    = inject('syncing');
 const syncStatus = inject('syncStatus');
 const runSync    = inject('runSync');
-const drawer     = inject('drawer');
-const scope      = inject('scope');
-
 const db = computed(() => data.value?.dashboard || {});
 
 const overview            = computed(() => db.value.overview || {});
@@ -23,7 +19,6 @@ const recommendations     = computed(() => db.value.recommendations || {});
 const missedOpportunities = computed(() => db.value.missedOpportunities || []);
 const metrics             = computed(() => db.value.metrics || null);
 const recentAnalyses      = computed(() => db.value.recentAnalyses || []);
-const recentCalls         = computed(() => data.value?.calls || []);
 const extractionRates     = computed(() => db.value.extractionRates || []);
 const actionExecRates     = computed(() => db.value.actionExecutionRates || []);
 
@@ -41,7 +36,7 @@ const recGroups = computed(() => {
   ].filter((g) => g.items.length);
 });
 
-function openCall(callId) { drawer.open(callId, scope.value); }
+
 </script>
 
 <template>
@@ -190,10 +185,5 @@ function openCall(callId) { drawer.open(callId, scope.value); }
       </div>
     </template>
 
-    <!-- Recent calls -->
-    <template v-if="recentCalls.length">
-      <div class="cp-section-title">Recent Calls</div>
-      <CallsTable :calls="recentCalls" :show-agent="true" @open-call="openCall" />
-    </template>
   </template>
 </template>
