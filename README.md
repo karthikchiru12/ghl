@@ -195,19 +195,27 @@ The `public/` directory is gitignored and only ever exists as a build artifact.
 
 ---
 
-## Ownership
+## Built by one person
 
-Built solo as a take-home assignment. Every layer — OAuth flow, database schema, AI integration, background scheduler, Vue embed, CSS — was designed and implemented by one person.
+Every decision in this codebase — from the database schema to the LLM prompt to the CSS — was made and implemented by one engineer, without a team to delegate to or review against.
 
-### What is real vs. mocked
+That meant wearing a lot of hats at once:
 
-| | Status |
+- **Platform engineer** — navigated GHL's OAuth 2.0 marketplace flow, token refresh lifecycle, and multi-tenant session storage from scratch
+- **Backend engineer** — designed a normalized PostgreSQL schema for voice agents, call logs, and AI analyses; wrote all 13 dashboard aggregation queries; built the background scheduler with per-location concurrency control
+- **AI engineer** — crafted the structured analysis prompt for Minimax M2.5, enforced JSON schema bounds, handled LLM retry logic, and mapped raw model output into actionable product metrics
+- **Frontend engineer** — built a Vue 3 + Vite embed that injects itself into GHL's SPA without disrupting GHL's own Vue module federation, detects navigation via `pushState`/`replaceState` interception, and gracefully mounts/unmounts on route changes
+- **DevOps** — wrote a multi-stage Dockerfile so the Vite build happens at image build time and production ships only compiled assets, never dev dependencies
+
+### Nothing is mocked
+
+| Component | Status |
 |---|---|
-| GHL OAuth 2.0 flow | Real — full install/callback/token refresh |
-| GHL API call sync | Real — pulls live call data via GHL v2 API |
-| AI analysis (Chutes/Minimax) | Real — live LLM calls, structured JSON output |
-| PostgreSQL persistence | Real — production schema, multi-tenant |
-| Background scheduler | Real — `setInterval` auto-runs across all installations |
-| GHL UI embed | Real — injects into GHL via marketplace `<script>` tag |
+| GHL OAuth 2.0 install flow | Real — full install/callback/token refresh across locations |
+| GHL API call sync | Real — live call logs pulled via GHL v2 Voice AI API |
+| AI analysis | Real — live Minimax M2.5 calls via Chutes, structured JSON stored per call |
+| PostgreSQL persistence | Real — production multi-tenant schema, no in-memory fallbacks |
+| Background scheduler | Real — auto-syncs and analyzes across all installed locations every 15 min |
+| GHL UI embed | Real — injects into the live GHL app, responds to SPA navigation |
 
-No data is mocked or hardcoded. The app requires a real GHL OAuth installation and a live database to function.
+The app requires a real GHL OAuth installation, a live database, and valid API keys to function. There is no demo mode, no seed data, and no mocked API responses.
