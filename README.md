@@ -195,6 +195,28 @@ The `public/` directory is gitignored and only ever exists as a build artifact.
 
 ---
 
+## Installing in a HighLevel Sandbox
+
+Add the embed script to GHL
+
+1. In your GHL sub-account, go to **Settings → Custom JS / Head Tracking Code** (or the equivalent custom JS field)
+2. Add the following — replace the values with your own:
+
+```html
+<script>
+  window.GHLVoiceAICopilotConfig = {
+    appId: "YOUR_APP_ID",
+    apiBase: "https://your-domain.com"
+  };
+</script>
+<script async src="https://your-domain.com/ghl-voice-ai-observability-embed.js"></script>
+```
+3. **Custom CSS** 
+
+```css
+@import url("https://your-domain.com/ghl-voice-ai-observability-embed.css");
+```
+
 ## Team of One
 
 This project was designed, built, and tested by one person. No handoffs, no reviews, no one else to catch mistakes. Here is how each role was covered.
