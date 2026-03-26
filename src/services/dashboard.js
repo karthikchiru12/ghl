@@ -15,7 +15,7 @@ const log = createLogger('dashboard');
 async function getDashboardSummary(locationId, { recentLimit = 10, agentId = null } = {}) {
   log.debug('Building dashboard summary for location:', locationId);
 
-  const [callStats, agentStats, topFailures, recentAnalyses, recentCalls, scoreTrend, actionTypes, recommendations, missedOpportunities, transcriptHighlights, aggregatedMetrics] = await Promise.all([
+  const [callStats, agentStats, topFailures, recentAnalyses, recentCalls, scoreTrend, actionTypes, recommendations, missedOpportunities, transcriptHighlights, aggregatedMetrics, extractionRates, actionExecutionRates] = await Promise.all([
     // ─── Overall call stats ────────────────────────────────────────────────
     pool.query(
       `SELECT
@@ -196,6 +196,67 @@ async function getDashboardSummary(locationId, { recentLimit = 10, agentId = nul
       [locationId, agentId]
     ),
 
+    // ─── Per-field extraction rates (dynamic agent goals) ────────────────
+    pool.query(
+      `SELECT
+         key                                                        AS field_name,
+         COUNT(*) FILTER (
+           WHERE extracted_data -> key IS NOT NULL
+             AND extracted_data -> key <> 'null'::jsonb
+             AND extracted_data ->> key <> ''
+         )::INT                                                     AS collected_count,
+         COUNT(*)::INT                                              AS total_count,
+         ROUND(
+           COUNT(*) FILTER (
+             WHERE extracted_data -> key IS NOT NULL
+               AND extracted_data -> key <> 'null'::jsonb
+               AND extracted_data ->> key <> ''
+           )::NUMERIC / NULLIF(COUNT(*), 0) * 100
+         )::INT                                                     AS collection_rate
+       FROM call_logs
+       CROSS JOIN LATERAL jsonb_object_keys(
+         COALESCE(extracted_data, '{}'::jsonb)
+       ) AS key
+       WHERE location_id = $1
+         AND ($2::TEXT IS NULL OR agent_id = $2)
+         AND extracted_data IS NOT NULL
+         AND extracted_data <> 'null'::jsonb
+         AND extracted_data <> '{}'::jsonb
+       GROUP BY key
+       ORDER BY total_count DESC, collected_count DESC
+       LIMIT 10`,
+      [locationId, agentId]
+    ),
+
+    // ─── Per-action execution rates (dynamic agent goals) ─────────────────
+    pool.query(
+      `SELECT
+         action->>'actionType'                              AS action_type,
+         COUNT(DISTINCT cl.call_id)::INT                   AS calls_executed,
+         total.total_calls,
+         ROUND(
+           COUNT(DISTINCT cl.call_id)::NUMERIC
+           / NULLIF(total.total_calls, 0) * 100
+         )::INT                                            AS execution_rate
+       FROM call_logs cl
+       CROSS JOIN LATERAL jsonb_array_elements(
+         COALESCE(cl.executed_actions, '[]'::jsonb)
+       ) AS action
+       CROSS JOIN (
+         SELECT COUNT(*)::INT AS total_calls
+         FROM call_logs
+         WHERE location_id = $1
+           AND ($2::TEXT IS NULL OR agent_id = $2)
+       ) total
+       WHERE cl.location_id = $1
+         AND ($2::TEXT IS NULL OR cl.agent_id = $2)
+         AND action->>'actionType' IS NOT NULL
+       GROUP BY action->>'actionType', total.total_calls
+       ORDER BY calls_executed DESC
+       LIMIT 8`,
+      [locationId, agentId]
+    ),
+
     // ─── Aggregated analysis metrics ─────────────────────────────────────
     pool.query(
       `SELECT
@@ -257,6 +318,18 @@ async function getDashboardSummary(locationId, { recentLimit = 10, agentId = nul
     actionBreakdown: actionTypes.rows.map((row) => ({
       actionType: row.action_type,
       frequency: Number(row.frequency),
+    })),
+    extractionRates: extractionRates.rows.map((r) => ({
+      fieldName:      r.field_name,
+      collectedCount: Number(r.collected_count),
+      totalCount:     Number(r.total_count),
+      collectionRate: Number(r.collection_rate ?? 0),
+    })),
+    actionExecutionRates: actionExecutionRates.rows.map((r) => ({
+      actionType:    r.action_type,
+      callsExecuted: Number(r.calls_executed),
+      totalCalls:    Number(r.total_calls),
+      executionRate: Number(r.execution_rate ?? 0),
     })),
     recommendations: {
       prompt: recommendations.rows.filter((r) => r.recommendation_type === 'prompt').map((r) => ({ text: r.recommendation_text, frequency: r.frequency })),
