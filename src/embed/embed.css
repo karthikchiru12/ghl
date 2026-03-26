@@ -689,10 +689,11 @@
   background: rgba(0, 0, 0, 0.35);
   z-index: 9998;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.25s ease;
 }
 
-.cp-drawer-overlay--open { opacity: 1; }
+.cp-drawer-overlay--open { opacity: 1; pointer-events: auto; }
 
 /* ── Slide-in drawer panel ───────────────────────────────────── */
 .cp-drawer {
@@ -705,6 +706,7 @@
   background: #ffffff;
   z-index: 9999;
   transform: translateX(100%);
+  pointer-events: none;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: -4px 0 32px rgba(0, 0, 0, 0.13);
   display: flex;
@@ -714,7 +716,7 @@
   color: #374151;
 }
 
-.cp-drawer--open { transform: translateX(0); }
+.cp-drawer--open { transform: translateX(0); pointer-events: auto; }
 
 .cp-drawer-inner {
   flex: 1;
