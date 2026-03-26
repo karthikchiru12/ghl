@@ -7,13 +7,25 @@ import App from './App.vue';
   if (window.__GHL_VOICE_AI_COPILOT_EMBED_LOADED__) return;
   window.__GHL_VOICE_AI_COPILOT_EMBED_LOADED__ = true;
 
-  // ── Config injected by the server-rendered <script> tag ──────────────────
-  // Falls back to window globals for flexibility
-  const config = window.__GHL_COPILOT_CONFIG__ || {};
+  // ── Derive apiBase from this script's own src ─────────────────────────
+  // Works even when loaded inside GHL's iframe — no hardcoding needed.
+  function getApiBase() {
+    const scripts = document.querySelectorAll('script[src]');
+    for (const s of scripts) {
+      if (s.src && s.src.includes('ghl-voice-ai-observability-embed')) {
+        try { return new URL(s.src).origin; } catch (_) {}
+      }
+    }
+    // Fallback: if served from the same origin (unlikely in GHL iframe)
+    return window.location.origin;
+  }
+
+  // ── Config: read from window.GHLVoiceAICopilotConfig (set in custom JS) ──
+  const injected = window.GHLVoiceAICopilotConfig || window.__GHL_COPILOT_CONFIG__ || {};
   const appConfig = {
-    appId:     config.appId     || '',
-    apiBase:   config.apiBase   || window.location.origin,
-    refreshMs: config.refreshMs || 30_000,
+    appId:     injected.appId     || '',
+    apiBase:   injected.apiBase   || getApiBase(),
+    refreshMs: injected.refreshMs || 30_000,
   };
 
   // ── Find the GHL embed anchor ─────────────────────────────────────────────
