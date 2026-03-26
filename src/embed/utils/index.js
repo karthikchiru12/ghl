@@ -64,6 +64,7 @@ export function scoreChipClass(v) {
 // ─── Field name prettifier ────────────────────────────────────────────────
 
 export function prettyFieldName(key) {
+  if (!key) return '';
   return key
     .replace(/([A-Z])/g, ' $1')
     .replace(/[_-]/g, ' ')
