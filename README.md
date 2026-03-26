@@ -195,17 +195,17 @@ The `public/` directory is gitignored and only ever exists as a build artifact.
 
 ---
 
-## Built by one person
+## Team of One
 
-Every decision in this codebase — from the database schema to the LLM prompt to the CSS — was made and implemented by one engineer, without a team to delegate to or review against.
+This project was designed, built, and tested by one person. No handoffs, no reviews, no one else to catch mistakes. Here is how each role was covered.
 
-That meant wearing a lot of hats at once:
+**Product** — Decided what to build and why. GHL already shows you your calls — the gap is understanding them. So the focus was: give operators a clear score for every call, show them which problems keep repeating, and tell them exactly what to fix. Every feature included has a direct answer to "so what do I do with this?"
 
-- **Platform engineer** — navigated GHL's OAuth 2.0 marketplace flow, token refresh lifecycle, and multi-tenant session storage from scratch
-- **Backend engineer** — designed a normalized PostgreSQL schema for voice agents, call logs, and AI analyses; wrote all 13 dashboard aggregation queries; built the background scheduler with per-location concurrency control
-- **AI engineer** — crafted the structured analysis prompt for Minimax M2.5, enforced JSON schema bounds, handled LLM retry logic, and mapped raw model output into actionable product metrics
-- **Frontend engineer** — built a Vue 3 + Vite embed that injects itself into GHL's SPA without disrupting GHL's own Vue module federation, detects navigation via `pushState`/`replaceState` interception, and gracefully mounts/unmounts on route changes
-- **DevOps** — wrote a multi-stage Dockerfile so the Vite build happens at image build time and production ships only compiled assets, never dev dependencies
+**Design** — Kept it simple and useful. The dashboard lives inside GHL without looking out of place. Information is layered — you see the summary first, click into a call when you need detail. Colors and scores are immediately readable without needing a legend.
+
+**Engineering** — Built the full stack: connecting to GHL's API, storing and analyzing call data, running AI analysis automatically in the background, and injecting the dashboard into the GHL interface. Everything works against real data, not test stubs.
+
+**QA** — Tested every screen against the live GHL app. Navigated between pages, switched tabs, reloaded, and went back through browser history to make sure the embed behaved correctly in every case. Checked AI outputs for accuracy and edge cases before considering anything done.
 
 ### Nothing is mocked
 
