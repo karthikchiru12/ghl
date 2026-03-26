@@ -17,36 +17,27 @@ import App from './App.vue';
 
   // ── Route helpers ─────────────────────────────────────────────────────────
   function isVoiceAiRoute() {
-    return window.location.pathname.includes('/ai-agents/voice-ai');
+    const path = window.location.pathname;
+    if (!path.includes('/ai-agents/voice-ai')) return false;
+
+    // Root voice AI page (no agent ID) — always show
+    const isAgentPage = /\/ai-agents\/voice-ai\/[^/?]+/.test(path);
+    if (!isAgentPage) return true;
+
+    // Agent page — only show on Dashboard & Logs tab
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    return !tab || tab === 'call_logs' || tab === 'dashboard_logs';
   }
 
-  // ── Anchor finding ────────────────────────────────────────────────────────
-  function findSummaryAnchor() {
-    // 1. "Calls Completed" text — present on root voice AI page
-    for (const el of document.querySelectorAll('*')) {
-      if (!el.childElementCount && el.textContent.trim() === 'Calls Completed') {
-        const block = closestBlock(el);
-        if (block) return block;
-      }
-    }
+  // ── Anchor finding — mirrors the old embed exactly ───────────────────────
+  function normalizeText(v) {
+    return String(v || '').replace(/\s+/g, ' ').trim();
+  }
 
-    // 2. Agent Name table header — GHL agents table
-    for (const th of document.querySelectorAll('th')) {
-      if (th.textContent.trim() === 'Agent Name') {
-        const table = th.closest('table');
-        if (table) return table.parentElement || table;
-      }
-    }
-
-    // 3. Agent page: tab content area (call_logs tab)
-    const tabContent = document.querySelector('[class*="tab-content"], [class*="tabContent"], [class*="tab-panel"]');
-    if (tabContent) return tabContent;
-
-    // 4. Generic main content wrapper used in GHL's layout
-    const main = document.querySelector('.hl-main-content, [class*="mainContent"], main[class]');
-    if (main) return main.firstElementChild || main;
-
-    return null;
+  function findElementByText(text) {
+    return Array.from(document.querySelectorAll('body *')).find((el) => {
+      return el.children.length === 0 && normalizeText(el.textContent) === text;
+    }) || null;
   }
 
   function closestBlock(el) {
@@ -59,9 +50,29 @@ import App from './App.vue';
     return el.parentElement;
   }
 
+  function findSummaryAnchor() {
+    // 1. "Calls Completed" — root voice AI page (same as old embed)
+    const callsEl = findElementByText('Calls Completed');
+    if (callsEl) return closestBlock(callsEl);
+
+    // 2. "Agent Name" table header — agents table (same as old embed)
+    const agentNameEl = findElementByText('Agent Name');
+    if (agentNameEl) {
+      const table = agentNameEl.closest('table');
+      return table ? (table.parentElement || table) : closestBlock(agentNameEl);
+    }
+
+    // 3. Agent page: "Dashboard & Logs" tab content
+    const tabContent = document.querySelector('[class*="tab-content"], [class*="tabContent"], [class*="tab-panel"]');
+    if (tabContent) return tabContent;
+
+    return null;
+  }
+
   // ── Mount / unmount ───────────────────────────────────────────────────────
-  let vueApp  = null;
-  let mountEl = null;
+  let vueApp     = null;
+  let mountEl    = null;
+  let retryCount = 0;
 
   function mountApp() {
     // Already mounted and still in DOM — nothing to do
@@ -70,8 +81,15 @@ import App from './App.vue';
     // If GHL's SPA removed our mountEl, fully unmount first
     if (vueApp) unmountApp();
 
-    const anchor = findSummaryAnchor();
-    if (!anchor) return; // DOM not ready yet — observer/interval will retry
+    let anchor = findSummaryAnchor();
+
+    // After ~5s of retries, fall back to main content wrapper
+    if (!anchor && retryCount > 3) {
+      anchor = document.querySelector('.hl-main-content, main') || document.body;
+    }
+
+    if (!anchor) { retryCount++; return; }
+    retryCount = 0;
 
     mountEl = document.createElement('div');
     anchor.parentNode.insertBefore(mountEl, anchor);
@@ -83,6 +101,7 @@ import App from './App.vue';
   function unmountApp() {
     if (vueApp) { vueApp.unmount(); vueApp = null; }
     if (mountEl) { mountEl.remove(); mountEl = null; }
+    retryCount = 0;
   }
 
   // ── Tick ──────────────────────────────────────────────────────────────────
