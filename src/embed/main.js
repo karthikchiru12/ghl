@@ -20,20 +20,32 @@ import App from './App.vue';
     return window.location.pathname.includes('/ai-agents/voice-ai');
   }
 
-  // ── Anchor: insert before "Calls Completed" just like the old embed ───────
+  // ── Anchor finding ────────────────────────────────────────────────────────
   function findSummaryAnchor() {
+    // 1. "Calls Completed" text — present on root voice AI page
     for (const el of document.querySelectorAll('*')) {
       if (!el.childElementCount && el.textContent.trim() === 'Calls Completed') {
-        return closestBlock(el);
+        const block = closestBlock(el);
+        if (block) return block;
       }
     }
-    // Fallback: Agent Name table header
+
+    // 2. Agent Name table header — GHL agents table
     for (const th of document.querySelectorAll('th')) {
       if (th.textContent.trim() === 'Agent Name') {
         const table = th.closest('table');
-        return table ? (table.parentElement || table) : null;
+        if (table) return table.parentElement || table;
       }
     }
+
+    // 3. Agent page: tab content area (call_logs tab)
+    const tabContent = document.querySelector('[class*="tab-content"], [class*="tabContent"], [class*="tab-panel"]');
+    if (tabContent) return tabContent;
+
+    // 4. Generic main content wrapper used in GHL's layout
+    const main = document.querySelector('.hl-main-content, [class*="mainContent"], main[class]');
+    if (main) return main.firstElementChild || main;
+
     return null;
   }
 
@@ -48,14 +60,18 @@ import App from './App.vue';
   }
 
   // ── Mount / unmount ───────────────────────────────────────────────────────
-  let vueApp   = null;
-  let mountEl  = null;
+  let vueApp  = null;
+  let mountEl = null;
 
   function mountApp() {
-    const anchor = findSummaryAnchor();
-    if (!anchor) return; // GHL DOM not ready yet — tick will retry
+    // Already mounted and still in DOM — nothing to do
+    if (vueApp && mountEl && document.body.contains(mountEl)) return;
 
-    if (mountEl && document.body.contains(mountEl)) return; // already mounted
+    // If GHL's SPA removed our mountEl, fully unmount first
+    if (vueApp) unmountApp();
+
+    const anchor = findSummaryAnchor();
+    if (!anchor) return; // DOM not ready yet — observer/interval will retry
 
     mountEl = document.createElement('div');
     anchor.parentNode.insertBefore(mountEl, anchor);
@@ -69,21 +85,31 @@ import App from './App.vue';
     if (mountEl) { mountEl.remove(); mountEl = null; }
   }
 
-  // ── Tick — mirrors the old embed's setInterval(tick, scanMs) ─────────────
+  // ── Tick ──────────────────────────────────────────────────────────────────
   function tick() {
     if (isVoiceAiRoute()) {
-      if (!vueApp) mountApp();
+      mountApp();
     } else {
       if (vueApp) unmountApp();
     }
   }
 
-  // Run immediately, then poll like the old embed did
+  // ── MutationObserver — reacts immediately when GHL's SPA changes the DOM ──
+  let debounceTimer = null;
+  const observer = new MutationObserver(() => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(tick, 200);
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // ── Interval fallback — catches URL changes the observer misses ───────────
+  setInterval(tick, 1500);
+
+  // ── Initial run ───────────────────────────────────────────────────────────
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', tick);
   } else {
     tick();
   }
-
-  setInterval(tick, 1500);
 })();
