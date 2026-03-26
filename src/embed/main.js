@@ -20,24 +20,23 @@ import App from './App.vue';
     const path = window.location.pathname;
     if (!path.includes('/ai-agents/voice-ai')) return false;
 
-    // Root voice AI page (no agent ID) — always show
     const isAgentPage = /\/ai-agents\/voice-ai\/[^/?]+/.test(path);
-    if (!isAgentPage) return true;
+    if (!isAgentPage) return true; // root voice AI page — always show
 
-    // Agent page — only show on Dashboard & Logs tab
+    // Agent page — only on Dashboard & Logs tab
     const tab = new URLSearchParams(window.location.search).get('tab');
     return !tab || tab === 'call_logs' || tab === 'dashboard_logs';
   }
 
-  // ── Anchor finding — mirrors the old embed exactly ───────────────────────
+  // ── Anchor finding ────────────────────────────────────────────────────────
   function normalizeText(v) {
     return String(v || '').replace(/\s+/g, ' ').trim();
   }
 
   function findElementByText(text) {
-    return Array.from(document.querySelectorAll('body *')).find((el) => {
-      return el.children.length === 0 && normalizeText(el.textContent) === text;
-    }) || null;
+    return Array.from(document.querySelectorAll('body *')).find(
+      (el) => el.children.length === 0 && normalizeText(el.textContent) === text
+    ) || null;
   }
 
   function closestBlock(el) {
@@ -51,18 +50,15 @@ import App from './App.vue';
   }
 
   function findSummaryAnchor() {
-    // 1. "Calls Completed" — root voice AI page (same as old embed)
     const callsEl = findElementByText('Calls Completed');
     if (callsEl) return closestBlock(callsEl);
 
-    // 2. "Agent Name" table header — agents table (same as old embed)
     const agentNameEl = findElementByText('Agent Name');
     if (agentNameEl) {
       const table = agentNameEl.closest('table');
       return table ? (table.parentElement || table) : closestBlock(agentNameEl);
     }
 
-    // 3. Agent page: "Dashboard & Logs" tab content
     const tabContent = document.querySelector('[class*="tab-content"], [class*="tabContent"], [class*="tab-panel"]');
     if (tabContent) return tabContent;
 
@@ -73,62 +69,66 @@ import App from './App.vue';
   let vueApp     = null;
   let mountEl    = null;
   let retryCount = 0;
+  let retryTimer = null;
 
   function mountApp() {
-    // Already mounted and still in DOM — nothing to do
     if (vueApp && mountEl && document.body.contains(mountEl)) return;
-
-    // If GHL's SPA removed our mountEl, fully unmount first
     if (vueApp) unmountApp();
 
     let anchor = findSummaryAnchor();
 
-    // After ~5s of retries, fall back to main content wrapper
     if (!anchor && retryCount > 3) {
       anchor = document.querySelector('.hl-main-content, main') || document.body;
     }
 
-    if (!anchor) { retryCount++; return; }
-    retryCount = 0;
+    if (!anchor) {
+      retryCount++;
+      retryTimer = setTimeout(mountApp, 1500);
+      return;
+    }
 
+    retryCount = 0;
     mountEl = document.createElement('div');
     anchor.parentNode.insertBefore(mountEl, anchor);
-
     vueApp = createApp(App, { config: appConfig });
     vueApp.mount(mountEl);
   }
 
   function unmountApp() {
+    clearTimeout(retryTimer);
+    retryCount = 0;
     if (vueApp) { vueApp.unmount(); vueApp = null; }
     if (mountEl) { mountEl.remove(); mountEl = null; }
-    retryCount = 0;
   }
 
-  // ── Tick ──────────────────────────────────────────────────────────────────
-  function tick() {
+  // ── URL change detection — hooks SPA navigation without MutationObserver ──
+  function onNavigate() {
     if (isVoiceAiRoute()) {
-      mountApp();
+      // Give GHL's SPA time to render before scanning for anchor
+      setTimeout(mountApp, 300);
     } else {
-      if (vueApp) unmountApp();
+      unmountApp();
     }
   }
 
-  // ── MutationObserver — reacts immediately when GHL's SPA changes the DOM ──
-  let debounceTimer = null;
-  const observer = new MutationObserver(() => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(tick, 200);
+  // Intercept history API calls (pushState / replaceState)
+  ['pushState', 'replaceState'].forEach((method) => {
+    const original = history[method];
+    history[method] = function (...args) {
+      original.apply(this, args);
+      onNavigate();
+    };
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // ── Interval fallback — catches URL changes the observer misses ───────────
-  setInterval(tick, 1500);
+  // Back/forward button
+  window.addEventListener('popstate', onNavigate);
 
   // ── Initial run ───────────────────────────────────────────────────────────
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', tick);
+    document.addEventListener('DOMContentLoaded', () => {
+      if (isVoiceAiRoute()) mountApp();
+    });
   } else {
-    tick();
+    if (isVoiceAiRoute()) mountApp();
   }
 })();
