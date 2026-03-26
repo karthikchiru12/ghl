@@ -20,14 +20,11 @@ import App from './App.vue';
     const path = window.location.pathname;
     if (!path.includes('/ai-agents/voice-ai')) return false;
 
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'edit') return false; // agent edit page — never show
-
     const isAgentPage = /\/ai-agents\/voice-ai\/[^/?]+/.test(path);
     if (!isAgentPage) return true; // root voice AI page — always show
 
     // Agent page — only on Dashboard & Logs tab
-    const tab = params.get('tab');
+    const tab = new URLSearchParams(window.location.search).get('tab');
     return !tab || tab === 'call_logs' || tab === 'dashboard_logs';
   }
 
